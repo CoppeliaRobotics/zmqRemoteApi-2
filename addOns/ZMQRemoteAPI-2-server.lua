@@ -2,7 +2,7 @@ local sim = require 'sim-2'
 local simZMQ
 local cbor
 
-import 'sim.ZMQRemoteAPI-2'
+sim.ZMQRemoteAPI = require 'sim.ZMQRemoteAPI-2'
 
 function sysCall_info()
     return {
