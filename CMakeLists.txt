@@ -18,3 +18,5 @@ coppeliasim_add_addon("addOns/ZMQRemoteAPI-2-server.lua")
 
 coppeliasim_add_lua("lua/sim/ZMQRemoteAPI-2-worker.lua" SUBDIR sim)
 coppeliasim_add_lua("lua/sim/ZMQRemoteAPI-2.lua" SUBDIR sim)
+
+coppeliasim_add_python("python/sim/zmqremoteapi.py" SUBDIR sim)
