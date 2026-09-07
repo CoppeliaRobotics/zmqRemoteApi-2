@@ -44,7 +44,7 @@ function getPort(client_id)
             language = 'lua',
             addOnMenuPath = 'zmqRemoteApiServerWorker-' .. client_id,
             code =
-                "CLIENT_ID = " .. client_id .. "\n" ..
+                "CLIENT_ID = '" .. client_id .. "'\n" ..
                 "WORKER_PORT = " .. worker.port .. "\n" ..
                 "require 'sim.ZMQRemoteAPI-2-worker'",
         }
