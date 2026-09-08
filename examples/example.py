@@ -1,6 +1,7 @@
 try:
     import sim
     from sim.zmqremoteapi import ZMQRemoteAPI
+    from sim.zmqasyncremoteapi import ZMQAsyncRemoteAPI
 except ModuleNotFoundError:
     raise SystemExit('CoppeliaSim libraries not found. Make sure those can be found via Python\'s path, e.g.: PYTHONPATH=/path/to/coppeliaSim/python python3 example.py')
 
@@ -8,7 +9,7 @@ except ModuleNotFoundError:
 rapi = ZMQRemoteAPI({'name': 'handshake', 'server': False})
 port = rapi.call(None, 'getPort', rapi.client_id)
 # connect to port:
-rapi = ZMQRemoteAPI({'name': 'client', 'server': False, 'port': port})
+rapi = ZMQAsyncRemoteAPI({'name': 'client', 'server': False, 'port': port})
 
 '''
 def cb(x):

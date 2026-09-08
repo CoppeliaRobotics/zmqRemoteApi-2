@@ -1,11 +1,11 @@
 import 'sim-2'
-import 'sim.ZMQRemoteAPI-2'
+import 'sim.ZMQAsyncRemoteAPI-2'
 
 assert(CLIENT_ID, 'CLIENT_ID not defined')
 assert(WORKER_PORT, 'WORKER_PORT not defined')
 
 function sysCall_init()
-    rapi = sim.ZMQRemoteAPI{
+    rapi = sim.ZMQAsyncRemoteAPI{
         name = '/zmqRemoteApiServer[worker-' .. CLIENT_ID .. ']',
         port = WORKER_PORT,
         server = true,
@@ -13,6 +13,10 @@ function sysCall_init()
     }
     rapi.callMethod = sim.callMethod
     rapi:log(1, 'spawned ' .. rapi.name)
+end
+
+function sysCall_actuation()
+    print('ZMQRemoteAPI-2-worker -> sysCall_actuation')
 end
 
 function sysCall_thread()
