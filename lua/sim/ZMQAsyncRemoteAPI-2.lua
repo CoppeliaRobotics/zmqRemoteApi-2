@@ -361,6 +361,30 @@ function ZMQAsyncRemoteAPI:send(msg)
     assert(self.socket)
     assert(type(msg) == 'table', 'bad type')
     self:log(2, 'sending:', msg)
+
+    -- XXX: fix packed tables by replacing nils with simCBOR.null
+    local nfixed = 0
+    for _, key in ipairs{'args', 'result'} do
+        local tbl = msg[key]
+        if type(tbl) == 'table' and math.type(tbl.n) == 'integer' then
+            self:log(2, '    key "' .. key .. '" contains a packed table')
+            local newtbl = {}
+            for i = 1, tbl.n do
+                if tbl[i] == nil then
+                    newtbl[i] = simCBOR.null
+                    self:log(2, '    fixed nil element ' .. i .. ' of packed table')
+                else
+                    newtbl[i] = tbl[i]
+                end
+            end
+            nfixed = nfixed + 1
+            msg[key] = newtbl
+        end
+    end
+    if nfixed > 0 then
+        self:log(2, 'sending (fixed ' .. nfixed .. ' keys):', msg)
+    end
+
     local data = simCBOR.encode(msg)
     simZMQ.send(self.socket, data, 0)
     self:log(2, 'sent')
