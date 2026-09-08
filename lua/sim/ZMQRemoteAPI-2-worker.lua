@@ -4,21 +4,6 @@ import 'sim.ZMQRemoteAPI-2'
 assert(CLIENT_ID, 'CLIENT_ID not defined')
 assert(WORKER_PORT, 'WORKER_PORT not defined')
 
-function test()
-    rapi:log(0, 'function "test" called')
-    return 'TEST1'
-end
-
-function testWithCallback(cb)
-    rapi:log(0, 'function "testWithCallback" called')
-    return _G[cb]('TwCB')
-end
-
-function test2()
-    rapi:log(0, 'function "test2" called')
-    return 'TEST2'
-end
-
 function sysCall_init()
     rapi = sim.ZMQRemoteAPI{
         name = '/zmqRemoteApiServer[worker-' .. CLIENT_ID .. ']',
