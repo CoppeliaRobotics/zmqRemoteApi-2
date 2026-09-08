@@ -12,10 +12,11 @@ end
 
 function sysCall_init()
     rapi_broker = sim.ZMQRemoteAPI{
-        name = '/zmqRemoteApiServer[broker]',
+        name = 'server',
         server = true,
     }
     workers = {}
+    rapi_broker:log(1, 'server started')
 end
 
 function sysCall_thread()

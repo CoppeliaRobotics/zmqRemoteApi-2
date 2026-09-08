@@ -2,10 +2,10 @@ import sim
 from sim.zmqremoteapi import ZMQRemoteAPI
 from sim.zmqasyncremoteapi import ZMQAsyncRemoteAPI
 
-rapi = ZMQRemoteAPI({'name': 'handshake', 'server': False})
+rapi = ZMQRemoteAPI({'name': 'client-handshake', 'server': False, 'verbose': 0})
 port = rapi.call(None, 'getPort', rapi.client_id)
 
-rapi = ZMQAsyncRemoteAPI({'name': 'client', 'server': False, 'port': port})
+rapi = ZMQAsyncRemoteAPI({'name': 'client', 'server': False, 'port': port, 'verbose': 0})
 
 sim.Object._callMethod = rapi.call
 
@@ -24,7 +24,8 @@ while scene.simulation.state != 17: noop()
 print('started simulation.')
 
 print(f'simulation time = {scene.simulation.time}')
-while scene.simulation.time < 0.1:
+for i in range(5):
+    if scene.simulation.time > 0.1: break
     print(f'simulation time = {scene.simulation.time}')
     noop()
 

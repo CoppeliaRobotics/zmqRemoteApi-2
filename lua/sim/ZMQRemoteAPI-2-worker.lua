@@ -6,17 +6,13 @@ assert(WORKER_PORT, 'WORKER_PORT not defined')
 
 function sysCall_init()
     rapi = sim.ZMQAsyncRemoteAPI{
-        name = '/zmqRemoteApiServer[worker-' .. CLIENT_ID .. ']',
+        name = 'worker-' .. CLIENT_ID,
         port = WORKER_PORT,
         server = true,
         verbose = 2,
     }
     rapi.callMethod = sim.callMethod
-    rapi:log(1, 'spawned ' .. rapi.name)
-end
-
-function sysCall_actuation()
-    print('ZMQRemoteAPI-2-worker -> sysCall_actuation')
+    rapi:log(1, 'spawned worker script (handle=' .. sim.self.handle ..')')
 end
 
 function sysCall_thread()
