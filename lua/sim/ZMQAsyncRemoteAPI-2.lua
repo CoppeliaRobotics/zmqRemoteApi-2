@@ -296,17 +296,17 @@ function ZMQAsyncRemoteAPI:poll(timeoutMs)
     local r, data
     if simZMQ.poll then
         -- If simZMQ provides poll, use it
-        local events = simZMQ.poll(self.socket, timeoutMs)
+        local events = simZMQ.poll({self.socket}, {simZMQ.POLLIN}, timeoutMs)
         if events == 0 then return false end
         r, data = simZMQ.recv(self.socket, 0)  -- non-blocking, but we know data is ready
     else
         -- Fallback: use non-blocking recv in a loop with small sleeps
-        local start = simZMQ.getTimeInMs()
+        local start = sim.app.systemTime
         while true do
             r, data = simZMQ.recv(self.socket, simZMQ.NOBLOCK)
             if r ~= -1 then break end
-            if simZMQ.getTimeInMs() - start >= timeoutMs then return false end
-            simZMQ.sleep(0.001)  -- yield to avoid busy-wait
+            if sim.app.systemTime - start >= timeoutMs then return false end
+            --sim.sleep(0.001)  -- yield to avoid busy-wait
         end
     end
     if r == -1 then return false end
@@ -346,9 +346,9 @@ function ZMQAsyncRemoteAPI:processRequests(timeoutMs)
             self:poll(100)  -- poll with small chunk to keep responsive
         end
     else
-        local start = simZMQ.getTimeInMs()
-        while simZMQ.getTimeInMs() - start < timeoutMs do
-            self:poll(math.min(timeoutMs - (simZMQ.getTimeInMs() - start), 100))
+        local start = sim.app.systemTime
+        while sim.app.systemTime - start < timeoutMs do
+            self:poll(math.min(timeoutMs - (sim.app.systemTime - start), 100))
         end
     end
 end

@@ -17,7 +17,7 @@ end
 
 function sysCall_thread()
     while true do
-        rapi:handleRequests()
+        rapi:processRequests(10)
         sim.self:yield()
     end
 end
