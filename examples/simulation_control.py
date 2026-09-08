@@ -25,7 +25,7 @@ print('started simulation.')
 
 print(f'simulation time = {scene.simulation.time}')
 for i in range(5):
-    if scene.simulation.time > 0.1: break
+    if scene.simulation.time > 5: break
     print(f'simulation time = {scene.simulation.time}')
     noop()
 
@@ -33,3 +33,5 @@ print('stopping simulation...')
 scene.simulation.stop()
 while scene.simulation.state != 0: noop()
 print('stopped simulation.')
+
+while 1: noop() # keep client alive & running
