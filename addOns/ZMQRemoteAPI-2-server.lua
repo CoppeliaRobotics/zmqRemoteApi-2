@@ -41,7 +41,7 @@ function getPort(client_id)
         worker = {}
         worker.port = nextWorkerPort or 24500
         worker.script = sim.app:createObject{
-            type = 'detachedScript',
+            type = 'script',
             language = 'lua',
             addOnMenuPath = 'zmqRemoteApiServerWorker-' .. client_id,
             code =
