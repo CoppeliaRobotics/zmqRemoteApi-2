@@ -1,12 +1,11 @@
 import 'sim-2'
 import 'sim.ZMQAsyncRemoteAPI-2'
 
-assert(CLIENT_ID, 'CLIENT_ID not defined')
 assert(WORKER_PORT, 'WORKER_PORT not defined')
 
 function sysCall_init()
     rapi = sim.ZMQAsyncRemoteAPI{
-        name = 'worker-' .. CLIENT_ID,
+        name = 'worker-' .. WORKER_PORT,
         port = WORKER_PORT,
         server = true,
         verbose = 2,

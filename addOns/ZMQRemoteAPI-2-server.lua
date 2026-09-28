@@ -35,24 +35,20 @@ function sysCall_cleanup()
     rapi_broker = nil
 end
 
-function getPort(client_id)
-    local worker = workers[client_id]
-    if not worker then
-        worker = {}
-        worker.port = nextWorkerPort or 24500
-        worker.script = sim.app:createObject{
-            type = 'script',
-            language = 'lua',
-            addOnMenuPath = 'zmqRemoteApiServerWorker-' .. client_id,
-            code =
-                "CLIENT_ID = '" .. client_id .. "'\n" ..
-                "WORKER_PORT = " .. worker.port .. "\n" ..
-                "require 'sim.ZMQRemoteAPI-2-worker'",
-        }
-        rapi_broker:log(1, 'spawning worker for client ' .. client_id, worker.script)
-        worker.script:init()
-        workers[client_id] = worker
-        nextWorkerPort = worker.port + 1
-    end
+function getPort()
+    worker = {}
+    worker.port = nextWorkerPort or 24500
+    worker.script = sim.app:createObject{
+        type = 'script',
+        language = 'lua',
+        addOnMenuPath = 'zmqRemoteApiServerWorker-' .. worker.port,
+        code =
+            "WORKER_PORT = " .. worker.port .. "\n" ..
+            "require 'sim.ZMQRemoteAPI-2-worker'",
+    }
+    rapi_broker:log(1, 'spawning worker for client at port ' .. worker.port, worker.script)
+    worker.script:init()
+    workers[worker.port] = worker
+    nextWorkerPort = worker.port + 1
     return worker.port
 end

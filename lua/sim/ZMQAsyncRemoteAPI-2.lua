@@ -52,7 +52,6 @@ function ZMQAsyncRemoteAPI:initialize(opts)
     self.name = opts.name
     self.server = not not opts.server
     self.verbose = tonumber(opts.verbose or 0)
-    self.clientID = opts.clientID or uuid.v4()
 
     local ctx = simZMQ.ctx_singleton()
     local host = opts.host or '127.0.0.1'
@@ -245,7 +244,6 @@ function ZMQAsyncRemoteAPI:handleRequest(req)
             _G[req.func] = function(...)
                 return self:call(nil, req.func, ...)
             end
-            print('DEBUG: registered a callback "' .. req.func .. '". current global functions: ' .. table.join(filter(function(k) return type(_G[k]) == 'function' end, table.keys(_G)), ', '))
             return true
         end)
         self:send{ msg = 'result', id = id, error = not ok, result = result }

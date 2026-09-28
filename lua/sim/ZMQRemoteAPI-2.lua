@@ -44,7 +44,6 @@ local ZMQRemoteAPI = class 'sim.ZMQRemoteAPI'
     - name      : optional identifier for logging
     - server    : true -> bind as REP server, false -> connect as REQ client
     - verbose   : 0 = quiet, 1 = warnings, 2 = full traffic
-    - clientID  : unique id (generated if omitted)
     - host, port: network settings
 ]]--
 function ZMQRemoteAPI:initialize(opts)
@@ -52,7 +51,6 @@ function ZMQRemoteAPI:initialize(opts)
     self.name = opts.name
     self.server = not not opts.server
     self.verbose = tonumber(opts.verbose or 0)
-    self.clientID = opts.clientID or uuid.v4()
     local ctx = simZMQ.ctx_singleton()
     local host = opts.host or '127.0.0.1'
     local port = opts.port or 24020

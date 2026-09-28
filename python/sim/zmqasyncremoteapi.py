@@ -58,7 +58,6 @@ class ZMQAsyncRemoteAPI:
         self.name = opts.get('name')
         self.server = bool(opts.get('server', False))
         self.verbose = opts.get('verbose', 0)
-        self.client_id = opts.get('clientID', str(uuid.uuid4()))
 
         self._context = zmq.Context()
         # Both sides use DEALER to allow asynchronous bidirectional communication.
