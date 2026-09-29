@@ -291,27 +291,21 @@ end
 function ZMQAsyncRemoteAPI:poll(timeoutMs)
     timeoutMs = timeoutMs or 0
     -- Use simZMQ.poll if available, or fallback to non-blocking recv with sleep
-    local r, data
+    local msg
     if simZMQ.poll then
         -- If simZMQ provides poll, use it
         local events = simZMQ.poll({self.socket}, {simZMQ.POLLIN}, timeoutMs)
         if events == 0 then return false end
-        r, data = simZMQ.recv(self.socket, 0)  -- non-blocking, but we know data is ready
+        msg = self:recv(true)
     else
         -- Fallback: use non-blocking recv in a loop with small sleeps
         local start = sim.app.systemTime
         while true do
-            r, data = simZMQ.recv(self.socket, simZMQ.NOBLOCK)
-            if r ~= -1 then break end
+            msg = self:recv(false)
+            if msg then break end
             if sim.app.systemTime - start >= timeoutMs then return false end
             --sim.sleep(0.001)  -- yield to avoid busy-wait
         end
-    end
-    if r == -1 then return false end
-    local ok, msg = pcall(simCBOR.decode, data)
-    if not ok then
-        self:log(1, 'invalid CBOR data')
-        return false
     end
     self:log(2, 'received:', msg)
     self:_processMessage(msg)
