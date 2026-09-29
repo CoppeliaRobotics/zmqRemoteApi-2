@@ -43,7 +43,6 @@ Note: Unlike the Lua version (which uses _G), this implementation uses
       `self.callables` exclusively for function lookup on both sides.
 """
 
-import uuid
 import zmq
 import cbor2
 import numpy as np

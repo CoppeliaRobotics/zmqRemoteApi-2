@@ -23,7 +23,7 @@
     Responses:   { id = <same>, msg = 'result', error = <bool>,
                    result = <any> }
 
-  The `id` is a unique identifier (e.g., a UUID or incremental counter) that
+  The `id` is a unique identifier (e.g., incremental counter) that
   allows the receiver to match a response to the original request.
 
   Socket setup:
@@ -42,8 +42,6 @@ local sim = require 'sim-2'
 local simCBOR = require 'simCBOR'
 local simZMQ = require 'simZMQ'
 simZMQ.__raiseErrors()
-local uuid = require 'uuid'
-uuid.set_rng(uuid.rng.math_random())
 
 local ZMQRemoteAPI = class 'sim.ZMQRemoteAPI'
 
