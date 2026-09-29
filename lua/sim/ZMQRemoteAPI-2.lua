@@ -312,7 +312,6 @@ function ZMQRemoteAPI:poll(timeoutMs)
             --sim.sleep(0.001)  -- yield to avoid busy-wait
         end
     end
-    self:log(2, 'received:', msg)
     self:_processMessage(msg)
     return true
 end
