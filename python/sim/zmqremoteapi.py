@@ -59,6 +59,7 @@ class ZMQRemoteAPI:
         self.name = opts.get('name')
         self.server = bool(opts.get('server', False))
         self.verbose = opts.get('verbose', 0)
+        self.last_send_time = time()
         self.last_recv_time = time()
 
         self._context = zmq.Context()
