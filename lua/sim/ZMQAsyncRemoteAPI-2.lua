@@ -177,8 +177,11 @@ function ZMQAsyncRemoteAPI:registerCallback(funcName, func)
     assert(type(funcName) == 'string', 'invalid function name')
     assert(type(func) == 'function', 'callback must be a function')
     self._callables[funcName] = func
-    local req = { msg = 'registerCallback', func = funcName }
-    self:_sendRequestAndWait(req)
+
+    if not self.server then
+        local req = { msg = 'registerCallback', func = funcName }
+        self:_sendRequestAndWait(req)
+    end
 end
 
 --[[

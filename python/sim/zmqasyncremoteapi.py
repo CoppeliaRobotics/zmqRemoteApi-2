@@ -173,8 +173,10 @@ class ZMQAsyncRemoteAPI:
         assert isinstance(func_name, str), 'func_name must be a string'
         assert callable(func), 'callback must be a callable'
         self.callables[func_name] = func
-        req = {'msg': 'registerCallback', 'func': func_name}
-        self._send_request_and_wait(req)
+
+        if not self.server:
+            req = {'msg': 'registerCallback', 'func': func_name}
+            self._send_request_and_wait(req)
 
     def handle_request(self, req: Dict[str, Any]) -> None:
         """
