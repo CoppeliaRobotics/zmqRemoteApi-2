@@ -13,9 +13,13 @@ sim.Object._callMethod = rapi.call
 scene = sim.scene
 
 def s_sensing():
-    print(f'sensing phase (t={scene.simulation.time})...')
+    print(f'sensing phase (t={scene.simulation.time:.3f})...')
+
+def s_actuation():
+    print(f'actuation phase (t={scene.simulation.time:.3f})...')
 
 rapi.register_callback('sysCall_sensing', s_sensing, True)
+rapi.register_callback('sysCall_actuation', s_actuation, True)
 
 def noop():
     if rapi.last_send_time + 5 < time():
