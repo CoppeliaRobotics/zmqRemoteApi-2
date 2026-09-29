@@ -14,6 +14,7 @@ function sysCall_init()
         server = true,
         verbose = 2,
     }
+    rapi:registerCallback('noop', noop)
     rapi.callMethod = sim.callMethod
     rapi:log(1, 'spawned worker script (handle=' .. sim.self.handle ..')')
 end

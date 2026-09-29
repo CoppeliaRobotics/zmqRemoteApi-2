@@ -17,8 +17,6 @@ def s_sensing():
 
 rapi.register_callback('sysCall_sensing', s_sensing)
 
-rapi.register_callback('noop', lambda: None)
-
 def noop():
     if rapi.last_send_time + 5 < time():
         # keep worker alive
