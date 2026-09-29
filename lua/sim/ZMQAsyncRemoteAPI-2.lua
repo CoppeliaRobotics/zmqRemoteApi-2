@@ -52,6 +52,7 @@ function ZMQAsyncRemoteAPI:initialize(opts)
     self.name = opts.name
     self.server = not not opts.server
     self.verbose = tonumber(opts.verbose or 0)
+    self.lastSendTime = sim.app.systemTime
     self.lastRecvTime = sim.app.systemTime
 
     local ctx = simZMQ.ctx_singleton()
@@ -236,15 +237,15 @@ function ZMQAsyncRemoteAPI:handleRequest(req)
         local ok, result = pcall(function()
             assert(type(req.func) == 'string', 'invalid function name')
             -- Store a wrapper that calls back to the remote side.
-            --[[ (this won't work properly)
             self._callables[req.func] = function(...)
                 -- This will send a 'call' request to the other side.
                 return self:call(nil, req.func, ...)
             end
-            ]]--
+            --[[
             _G[req.func] = function(...)
                 return self:call(nil, req.func, ...)
             end
+            ]]--
             return true
         end)
         self:send{ msg = 'result', id = id, error = not ok, result = result }
@@ -380,6 +381,7 @@ function ZMQAsyncRemoteAPI:send(msg)
 
     local data = simCBOR.encode(msg)
     simZMQ.send(self.socket, data, 0)
+    self.lastSendTime = sim.app.systemTime
     self:log(2, 'sent')
 end
 

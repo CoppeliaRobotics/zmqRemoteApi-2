@@ -47,6 +47,7 @@ import uuid
 import zmq
 import cbor2
 import numpy as np
+from time import time
 from typing import Any, Callable, Dict, Optional, Tuple
 
 import sim
@@ -58,6 +59,7 @@ class ZMQAsyncRemoteAPI:
         self.name = opts.get('name')
         self.server = bool(opts.get('server', False))
         self.verbose = opts.get('verbose', 0)
+        self.last_recv_time = time()
 
         self._context = zmq.Context()
         # Both sides use DEALER to allow asynchronous bidirectional communication.
@@ -287,12 +289,8 @@ class ZMQAsyncRemoteAPI:
         if self._socket.poll(timeout_ms, zmq.POLLIN) == 0:
             return False
 
-        # Receive the message (non-blocking because poll said it's ready)
-        data = self._socket.recv(flags=zmq.NOBLOCK)
-        try:
-            msg = cbor2.loads(data, tag_hook=self._tag_hook)
-        except Exception as e:
-            self.log(1, 'invalid CBOR data:', e)
+        msg = self.recv(block=True)
+        if msg is None:
             return False
 
         self.log(2, 'received:', msg)
@@ -339,6 +337,7 @@ class ZMQAsyncRemoteAPI:
         self.log(2, 'sending:', msg)
         data = cbor2.dumps(msg)
         self._socket.send(data)
+        self.last_send_time = time()
         self.log(2, 'sent')
 
     def recv(self, block: bool = True) -> Optional[Dict[str, Any]]:
@@ -365,6 +364,7 @@ class ZMQAsyncRemoteAPI:
             self.log(1, 'invalid CBOR data:', e)
             return None
         self.log(2, 'received:', msg)
+        self.last_recv_time = time()
         return msg
 
     # ----------------------------------------------------------------------

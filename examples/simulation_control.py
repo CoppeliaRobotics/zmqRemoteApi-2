@@ -1,6 +1,7 @@
 import sim
 from sim.zmqremoteapi import ZMQRemoteAPI
 from sim.zmqasyncremoteapi import ZMQAsyncRemoteAPI
+from time import time
 
 rapi = ZMQRemoteAPI({'name': 'client-handshake', 'server': False, 'verbose': 0})
 port = rapi.call(None, 'getPort')
@@ -17,7 +18,13 @@ def s_sensing():
 
 rapi.register_callback('sysCall_sensing', s_sensing)
 
-noop = lambda: rapi.poll(10)
+rapi.register_callback('noop', lambda: None)
+
+def noop():
+    if rapi.last_send_time + 5 < time():
+        # keep worker alive
+        rapi.call(None, 'noop')
+    rapi.poll(10)
 
 print('starting simulation...')
 scene.simulation.start()
