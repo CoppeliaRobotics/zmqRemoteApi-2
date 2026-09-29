@@ -138,21 +138,8 @@ class ZMQRemoteAPI:
                 return result
 
             msg = self.recv(block=True)
-            if msg is None:
-                continue
-
-            if msg.get('msg') == 'result':
-                pend = self._pending.get(msg['id'])
-                if pend:
-                    pend['result'] = msg['result']
-                    pend['error'] = msg.get('error', False)
-                    pend['done'] = True
-                else:
-                    self.log(1, f'received result for unknown id: {msg["id"]}')
-            elif msg.get('msg') in ('call', 'registerCallback'):
+            if msg:
                 self.handle_request(msg)
-            else:
-                self.log(1, f'unexpected message type: {msg.get("msg")}')
 
     def call(self, target: Optional[int], func_name: str, *args: Any) -> Any:
         """
@@ -232,7 +219,6 @@ class ZMQRemoteAPI:
                 error = True
 
             self.send({'msg': 'result', 'id': req_id, 'error': error, 'result': result})
-
         elif msg == 'registerCallback':
             func_name: str = req['func']
             try:
@@ -245,51 +231,51 @@ class ZMQRemoteAPI:
             except Exception as e:
                 error = True
                 result = str(e)
-            self.send({'msg': 'result', 'id': req_id, 'error': error, 'result': result})
 
+            self.send({'msg': 'result', 'id': req_id, 'error': error, 'result': result})
+        elif msg == 'result':
+            pend = self._pending.get(req_id)
+            if pend:
+                pend['result'] = req['result']
+                pend['error'] = req.get('error', False)
+                pend['done'] = True
+            else:
+                self.log(1, f'received result for unknown id: {req_id}')
         else:
             self.log(1, f'unsupported message: {msg}')
 
-    def handle_requests(self) -> None:
+    def handle_requests(self, timeout: float = -1) -> None:
         """
         Main loop for processing incoming requests.
-        This can be called on either side, but is typically used on the server
-        to continuously handle incoming calls and registrations.
-        It receives any message:
-            - If it is a request (call/registerCallback), it handles it.
-            - If it is a result, it updates the pending table (for any outstanding
-              request that may have been sent by this side). If no pending request
-              matches, the result is logged and ignored.
-        The loop runs indefinitely until an error occurs or the socket is closed.
+        If timeout is negative, the loop runs indefinitely until an error occurs or the socket is closed.
+        If timeout is positive, it runs for at most the specified amount of seconds.
         """
-        while True:
-            msg = self.recv(block=True)
-            if msg is None:
-                break
-
-            if msg.get('msg') == 'result':
-                pend = self._pending.get(msg['id'])
-                if pend:
-                    pend['result'] = msg['result']
-                    pend['error'] = msg.get('error', False)
-                    pend['done'] = True
+        if timeout < 0:
+            while True:
+                msg = self.recv(block=True)
+                if msg:
+                    self.handle_request(msg)
                 else:
-                    self.log(1, f'received result for unknown id: {msg["id"]}')
-            elif msg.get('msg') in ('call', 'registerCallback'):
-                self.handle_request(msg)
-            else:
-                self.log(1, f'unexpected message type: {msg.get("msg")}')
+                    break
+        else:
+            start = time()
+            while True:
+                remaining = timeout - (time() - start)
+                if remaining <= 0:
+                    break
+                self.poll(min(remaining, 0.1))
 
-    def poll(self, timeout_ms: int = 0) -> bool:
+
+    def poll(self, timeout: float = 0) -> bool:
         """
-        Check for one incoming message and process it, without blocking longer than timeout_ms.
+        Check for one incoming message and process it, without blocking longer than timeout.
         Returns True if a message was processed, False if none arrived.
         """
         if not self._socket:
             raise RuntimeError('Socket not available')
 
         # Use poll to check for incoming data with timeout
-        if self._socket.poll(timeout_ms, zmq.POLLIN) == 0:
+        if self._socket.poll(int(timeout * 1000), zmq.POLLIN) == 0:
             return False
 
         msg = self.recv(block=True)
@@ -297,41 +283,8 @@ class ZMQRemoteAPI:
             return False
 
         self.log(2, 'received:', msg)
-        self._process_message(msg)
+        self.handle_request(msg)
         return True
-
-    def _process_message(self, msg: Dict[str, Any]) -> None:
-        """Internal: process one decoded message (result or request)."""
-        if msg.get('msg') == 'result':
-            pend = self._pending.get(msg['id'])
-            if pend:
-                pend['result'] = msg['result']
-                pend['error'] = msg.get('error', False)
-                pend['done'] = True
-            else:
-                self.log(1, f'received result for unknown id: {msg["id"]}')
-        elif msg.get('msg') in ('call', 'registerCallback'):
-            self.handle_request(msg)
-        else:
-            self.log(1, f'unexpected message type: {msg.get("msg")}')
-
-    def process_requests(self, timeout_ms: int = -1) -> None:
-        """
-        Process incoming messages repeatedly until timeout (in milliseconds) expires.
-        If timeout_ms < 0, block forever (same as handle_requests).
-        """
-        if timeout_ms < 0:
-            # Blocking loop: same as handle_requests
-            self.handle_requests()
-            return
-
-        import time
-        start = time.time()
-        while True:
-            remaining = timeout_ms - int((time.time() - start) * 1000)
-            if remaining <= 0:
-                break
-            self.poll(min(remaining, 100))  # poll in small chunks to keep responsive
 
     def send(self, msg: Dict[str, Any]) -> None:
         """Low-level sender: CBOR-encodes the dict and sends it."""

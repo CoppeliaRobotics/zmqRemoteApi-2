@@ -21,7 +21,7 @@ def noop():
     if rapi.last_send_time + 5 < time():
         # keep worker alive
         rapi.call(None, 'noop')
-    rapi.poll(10)
+    rapi.poll(0.010)
 
 print('starting simulation...')
 scene.simulation.start()

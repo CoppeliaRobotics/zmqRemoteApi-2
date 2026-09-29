@@ -131,24 +131,8 @@ function ZMQRemoteAPI:_sendRequestAndWait(req)
         end
 
         local msg = self:recv(true)
-        if not msg then
-            -- recv should never return nil when blocking; but if it does, break.
-            break
-        end
-
-        if msg.msg == 'result' then
-            local pend = self._pending[msg.id]
-            if pend then
-                pend.result = msg.result
-                pend.error = msg.error
-                pend.done = true
-            else
-                self:log(1, 'received result for unknown id:', msg.id)
-            end
-        elseif msg.msg == 'call' or msg.msg == 'registerCallback' then
+        if msg then
             self:handleRequest(msg)
-        else
-            self:log(1, 'unexpected message type:', msg.msg)
         end
     end
 end
@@ -201,11 +185,12 @@ end
   Note: The request is expected to have an `id` field, which is used in the response.
 --]]
 function ZMQRemoteAPI:handleRequest(req)
-    assert(type(req.msg) == 'string', 'malformed request')
-    local id = req.id
-    assert(id ~= nil, 'request missing id')
+    local msg = req.msg
+    assert(type(msg) == 'string', 'malformed request')
+    local req_id = req.id
+    assert(req_id ~= nil, 'request missing id')
 
-    if req.msg == 'call' then
+    if msg == 'call' then
         local ok, result = pcall(function()
             assert(type(req.func) == 'string', 'invalid function name')
             local args = req.args or {}
@@ -221,21 +206,8 @@ function ZMQRemoteAPI:handleRequest(req)
                 return table.pack(func(table.unpack(args)))
             end
         end)
-
-        -- Replace actual nil values with simCBOR.null for proper CBOR encoding.
-        if ok then
-            local n = result.n
-            result.n = nil
-            for i = 1, n do
-                if result[i] == nil then
-                    result[i] = simCBOR.null
-                end
-            end
-        end
-
-        self:send{ msg = 'result', id = id, error = not ok, result = result }
-
-    elseif req.msg == 'registerCallback' then
+        self:send{ msg = 'result', id = req_id, error = not ok, result = result }
+    elseif msg == 'registerCallback' then
         local ok, result = pcall(function()
             assert(type(req.func) == 'string', 'invalid function name')
             -- Store a wrapper that calls (via zmq) function on the remote side.
@@ -247,89 +219,57 @@ function ZMQRemoteAPI:handleRequest(req)
             end
             return true
         end)
-        self:send{ msg = 'result', id = id, error = not ok, result = result }
-
+        self:send{ msg = 'result', id = req_id, error = not ok, result = result }
+    elseif msg == 'result' then
+        local pend = self._pending[req_id]
+        if pend then
+            pend.result = req.result
+            pend.error = req.error
+            pend.done = true
+        else
+            self:log(1, 'received result for unknown id:', req_id)
+        end
     else
-        self:log(1, 'unsupported message:', req.msg)
+        self:log(1, 'unsupported message:', msg)
     end
 end
 
 --[[
   Main loop for processing incoming requests.
-  This can be called on either side, but is typically used on the server
-  to continuously handle incoming calls and registrations.
-  It receives any message:
-    - If it is a request (call/registerCallback), it handles it.
-    - If it is a result, it updates the pending table (for any outstanding
-      request that may have been sent by this side). If no pending request
-      matches, the result is logged and ignored.
-  The loop runs indefinitely until an error occurs or the socket is closed.
+  If timeout is negative, the loop runs indefinitely until an error occurs or the socket is closed.
+  If timeout is positive, it runs for at most the specified amount of seconds.
 --]]
-function ZMQRemoteAPI:handleRequests()
-    while true do
-        local msg = self:recv(true)
-        if not msg then break end
-
-        if msg.msg == 'result' then
-            local pend = self._pending[msg.id]
-            if pend then
-                pend.result = msg.result
-                pend.error = msg.error
-                pend.done = true
+function ZMQRemoteAPI:handleRequests(timeout)
+    timeout = timeout or -1
+    if timeout < 0 then
+        while true do
+            local msg = self:recv(true)
+            if msg then
+                self:handleRequest(msg)
             else
-                self:log(1, 'received result for unknown id:', msg.id)
+                break
             end
-        elseif msg.msg == 'call' or msg.msg == 'registerCallback' then
-            self:handleRequest(msg)
-        else
-            self:log(1, 'unexpected message type:', msg.msg)
+        end
+    else
+        local start = sim.app.systemTime
+        while true do
+            local remaining = timeout - (sim.app.systemTime - start)
+            if remaining <= 0 then break end
+            self:poll(math.min(remaining, 0.1))
         end
     end
 end
 
 -- Poll for one message with a timeout (in milliseconds).
 -- Returns true if a message was processed, false otherwise.
-function ZMQRemoteAPI:poll(timeoutMs)
+function ZMQRemoteAPI:poll(timeout)
     assert(self.socket)
-    timeoutMs = timeoutMs or 0
-    local events = simZMQ.poll({self.socket}, {simZMQ.POLLIN}, timeoutMs)
+    timeout = timeout or 0
+    local events = simZMQ.poll({self.socket}, {simZMQ.POLLIN}, math.floor(timeout * 1000))
     if events == 0 then return false end
     local msg = self:recv(true)
-    self:_processMessage(msg)
+    self:handleRequest(msg)
     return true
-end
-
--- Internal: process a single decoded message (result or request)
-function ZMQRemoteAPI:_processMessage(msg)
-    if msg.msg == 'result' then
-        local pend = self._pending[msg.id]
-        if pend then
-            pend.result = msg.result
-            pend.error = msg.error
-            pend.done = true
-        else
-            self:log(1, 'received result for unknown id:', msg.id)
-        end
-    elseif msg.msg == 'call' or msg.msg == 'registerCallback' then
-        self:handleRequest(msg)
-    else
-        self:log(1, 'unexpected message type:', msg.msg)
-    end
-end
-
--- Process messages repeatedly until timeoutMs expires (or forever if < 0)
-function ZMQRemoteAPI:processRequests(timeoutMs)
-    timeoutMs = timeoutMs or -1
-    if timeoutMs < 0 then
-        while true do
-            self:poll(100)  -- poll with small chunk to keep responsive
-        end
-    else
-        local start = sim.app.systemTime
-        while sim.app.systemTime - start < timeoutMs do
-            self:poll(math.min(timeoutMs - (sim.app.systemTime - start), 100))
-        end
-    end
 end
 
 --[[

@@ -21,7 +21,7 @@ end
 
 function sysCall_thread()
     while true do
-        rapi:processRequests(10)
+        rapi:handleRequests(0.010)
 
         -- terminate if inactive:
         local termTime = rapi.lastRecvTime + IDLE_TIMEOUT
