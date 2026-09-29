@@ -52,6 +52,7 @@ function ZMQAsyncRemoteAPI:initialize(opts)
     self.name = opts.name
     self.server = not not opts.server
     self.verbose = tonumber(opts.verbose or 0)
+    self.lastRecvTime = sim.app.systemTime
 
     local ctx = simZMQ.ctx_singleton()
     local host = opts.host or '127.0.0.1'
@@ -401,6 +402,7 @@ function ZMQAsyncRemoteAPI:recv(block)
         return
     end
     self:log(2, 'received:', msg)
+    self.lastRecvTime = sim.app.systemTime
     return msg
 end
 
