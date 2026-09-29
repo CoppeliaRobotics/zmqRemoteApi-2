@@ -15,7 +15,7 @@ scene = sim.scene
 def s_sensing():
     print(f'sensing phase (t={scene.simulation.time})...')
 
-rapi.register_callback('sysCall_sensing', s_sensing)
+rapi.register_callback('sysCall_sensing', s_sensing, True)
 
 def noop():
     if rapi.last_send_time + 5 < time():

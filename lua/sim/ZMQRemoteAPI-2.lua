@@ -171,13 +171,14 @@ end
   local function via a remote 'call' request.
   This method sends a 'registerCallback' request and waits for acknowledgment.
 --]]
-function ZMQRemoteAPI:registerCallback(funcName, func)
+function ZMQRemoteAPI:registerCallback(funcName, func, global_)
     assert(type(funcName) == 'string', 'invalid function name')
     assert(type(func) == 'function', 'callback must be a function')
+
     self._callables[funcName] = func
 
     if not self.server then
-        local req = { msg = 'registerCallback', func = funcName }
+        local req = { msg = 'registerCallback', func = funcName, global = not not global_ }
         self:_sendRequestAndWait(req)
     end
 end
@@ -237,16 +238,13 @@ function ZMQRemoteAPI:handleRequest(req)
     elseif req.msg == 'registerCallback' then
         local ok, result = pcall(function()
             assert(type(req.func) == 'string', 'invalid function name')
-            -- Store a wrapper that calls back to the remote side.
+            -- Store a wrapper that calls (via zmq) function on the remote side.
             self._callables[req.func] = function(...)
-                -- This will send a 'call' request to the other side.
                 return self:call(nil, req.func, ...)
             end
-            --[[
-            _G[req.func] = function(...)
-                return self:call(nil, req.func, ...)
+            if req.global then
+                _G[req.func] = self._callables[req.func]
             end
-            ]]--
             return true
         end)
         self:send{ msg = 'result', id = id, error = not ok, result = result }

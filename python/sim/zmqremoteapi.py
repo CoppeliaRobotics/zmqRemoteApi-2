@@ -163,7 +163,7 @@ class ZMQRemoteAPI:
         req = {'msg': 'call', 'target': target, 'func': func_name, 'args': args}
         return self._send_request_and_wait(req)
 
-    def register_callback(self, func_name: str, func: Callable) -> None:
+    def register_callback(self, func_name: str, func: Callable, global_: bool = False) -> None:
         """
         Registers a local function as a callback on the remote side.
         The remote side will store a wrapper that, when called, will invoke this
@@ -175,7 +175,7 @@ class ZMQRemoteAPI:
         self.callables[func_name] = func
 
         if not self.server:
-            req = {'msg': 'registerCallback', 'func': func_name}
+            req = {'msg': 'registerCallback', 'func': func_name, 'global': global_}
             self._send_request_and_wait(req)
 
     def handle_request(self, req: Dict[str, Any]) -> None:
@@ -237,8 +237,9 @@ class ZMQRemoteAPI:
             func_name: str = req['func']
             try:
                 # Store a wrapper that calls back to the remote side.
-                #(won't work properly) self.callables[func_name] = lambda *args: self.call(None, func_name, *args)
-                globals()[func_name] = lambda *args: self.call(None, func_name, *args)
+                self.callables[func_name] = lambda *args: self.call(None, func_name, *args)
+                if req['global']:
+                    globals()[func_name] = self.callables[func_name]
                 error = False
                 result = True
             except Exception as e:
