@@ -294,24 +294,11 @@ end
 -- Poll for one message with a timeout (in milliseconds).
 -- Returns true if a message was processed, false otherwise.
 function ZMQRemoteAPI:poll(timeoutMs)
+    assert(self.socket)
     timeoutMs = timeoutMs or 0
-    -- Use simZMQ.poll if available, or fallback to non-blocking recv with sleep
-    local msg
-    if simZMQ.poll then
-        -- If simZMQ provides poll, use it
-        local events = simZMQ.poll({self.socket}, {simZMQ.POLLIN}, timeoutMs)
-        if events == 0 then return false end
-        msg = self:recv(true)
-    else
-        -- Fallback: use non-blocking recv in a loop with small sleeps
-        local start = sim.app.systemTime
-        while true do
-            msg = self:recv(false)
-            if msg then break end
-            if sim.app.systemTime - start >= timeoutMs then return false end
-            --sim.sleep(0.001)  -- yield to avoid busy-wait
-        end
-    end
+    local events = simZMQ.poll({self.socket}, {simZMQ.POLLIN}, timeoutMs)
+    if events == 0 then return false end
+    local msg = self:recv(true)
     self:_processMessage(msg)
     return true
 end
