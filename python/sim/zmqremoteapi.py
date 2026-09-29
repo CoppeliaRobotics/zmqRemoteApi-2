@@ -1,5 +1,5 @@
 """
-ZMQAsyncRemoteAPI – asynchronous, bidirectional RPC over ZMQ DEALER sockets.
+ZMQRemoteAPI – asynchronous, bidirectional RPC over ZMQ DEALER sockets.
 
 Architecture overview:
 ----------------------
@@ -53,7 +53,7 @@ from typing import Any, Callable, Dict, Optional, Tuple
 import sim
 
 
-class ZMQAsyncRemoteAPI:
+class ZMQRemoteAPI:
     def __init__(self, opts: Optional[Dict[str, Any]] = None):
         opts = opts or {}
         self.name = opts.get('name')
@@ -91,7 +91,7 @@ class ZMQAsyncRemoteAPI:
 
     def log(self, level: int, *args: Any) -> None:
         if level <= self.verbose:
-            tag = 'ZMQAsyncRemoteAPI'
+            tag = 'ZMQRemoteAPI'
             if self.name:
                 tag += f'[{self.name}]'
             print(tag, *args)

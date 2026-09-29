@@ -1,5 +1,5 @@
 import 'sim-2'
-import 'sim.ZMQAsyncRemoteAPI-2'
+import 'sim.ZMQRemoteAPI-2'
 
 assert(WORKER_PORT, 'WORKER_PORT not defined')
 IDLE_TIMEOUT = IDLE_TIMEOUT or 10 -- seconds before termination after no received messages
@@ -8,7 +8,7 @@ function noop()
 end
 
 function sysCall_init()
-    rapi = sim.ZMQAsyncRemoteAPI{
+    rapi = sim.ZMQRemoteAPI{
         name = 'worker-' .. WORKER_PORT,
         port = WORKER_PORT,
         server = true,

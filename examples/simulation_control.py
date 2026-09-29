@@ -1,12 +1,12 @@
 import sim
-from sim.zmqasyncremoteapi import ZMQAsyncRemoteAPI
+from sim.zmqremoteapi import ZMQRemoteAPI
 from time import time
 
-rapi = ZMQAsyncRemoteAPI({'name': 'client-handshake', 'server': False, 'verbose': 0})
+rapi = ZMQRemoteAPI({'name': 'client-handshake', 'server': False, 'verbose': 0})
 port = rapi.call(None, 'getPort')
 print('port:', port)
 
-rapi = ZMQAsyncRemoteAPI({'name': 'client', 'server': False, 'port': port, 'verbose': 0})
+rapi = ZMQRemoteAPI({'name': 'client', 'server': False, 'port': port, 'verbose': 0})
 
 sim.Object._callMethod = rapi.call
 

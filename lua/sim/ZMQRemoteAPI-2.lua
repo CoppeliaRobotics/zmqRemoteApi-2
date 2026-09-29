@@ -1,5 +1,5 @@
 --[[
-  ZMQAsyncRemoteAPI – asynchronous, bidirectional RPC over ZMQ DEALER sockets.
+  ZMQRemoteAPI – asynchronous, bidirectional RPC over ZMQ DEALER sockets.
 
   Architecture overview:
   -----------------------
@@ -45,9 +45,9 @@ simZMQ.__raiseErrors()
 local uuid = require 'uuid'
 uuid.set_rng(uuid.rng.math_random())
 
-local ZMQAsyncRemoteAPI = class 'sim.ZMQAsyncRemoteAPI'
+local ZMQRemoteAPI = class 'sim.ZMQRemoteAPI'
 
-function ZMQAsyncRemoteAPI:initialize(opts)
+function ZMQRemoteAPI:initialize(opts)
     opts = opts or {}
     self.name = opts.name
     self.server = not not opts.server
@@ -73,27 +73,27 @@ function ZMQAsyncRemoteAPI:initialize(opts)
     self._id_counter = 0        -- simple incremental ID generator
 end
 
-function ZMQAsyncRemoteAPI:cleanup()
+function ZMQRemoteAPI:cleanup()
     if self.socket then
         simZMQ.close(self.socket)
         self.socket = nil
     end
 end
 
-function ZMQAsyncRemoteAPI:__gc()
+function ZMQRemoteAPI:__gc()
     self:cleanup()
 end
 
-function ZMQAsyncRemoteAPI:log(level, ...)
+function ZMQRemoteAPI:log(level, ...)
     if level <= self.verbose then
-        local id = 'ZMQAsyncRemoteAPI'
+        local id = 'ZMQRemoteAPI'
         if self.name then id = id .. '[' .. self.name .. ']' end
         print(id, ...)
     end
 end
 
 -- XXX: This method must be overridden if object‑oriented calls with `target` are needed.
-function ZMQAsyncRemoteAPI:callMethod(target, methodName, args)
+function ZMQRemoteAPI:callMethod(target, methodName, args)
     error 'property "callMethod" is not set'
 end
 
@@ -101,7 +101,7 @@ end
   Generates a unique request ID (simple incrementing counter).
   For production, consider using UUID or a combination with clientID.
 --]]
-function ZMQAsyncRemoteAPI:_nextId()
+function ZMQRemoteAPI:_nextId()
     self._id_counter = self._id_counter + 1
     return self._id_counter
 end
@@ -115,7 +115,7 @@ end
       it handles it via handleRequest (which may itself send requests and wait).
   This allows re‑entrant callbacks and multiple pending requests.
 --]]
-function ZMQAsyncRemoteAPI:_sendRequestAndWait(req)
+function ZMQRemoteAPI:_sendRequestAndWait(req)
     local id = self:_nextId()
     req.id = id
     self._pending[id] = { done = false, result = nil, error = nil }
@@ -160,7 +160,7 @@ end
   Sends a 'call' request and waits for the response.
   The `target` parameter is unused in this basic implementation (see callMethod).
 --]]
-function ZMQAsyncRemoteAPI:call(target, funcName, ...)
+function ZMQRemoteAPI:call(target, funcName, ...)
     assert(type(funcName) == 'string', 'invalid function name type')
     local args = table.pack(...)
     local req = { msg = 'call', target = target, func = funcName, args = args }
@@ -173,7 +173,7 @@ end
   local function via a remote 'call' request.
   This method sends a 'registerCallback' request and waits for acknowledgment.
 --]]
-function ZMQAsyncRemoteAPI:registerCallback(funcName, func)
+function ZMQRemoteAPI:registerCallback(funcName, func)
     assert(type(funcName) == 'string', 'invalid function name')
     assert(type(func) == 'function', 'callback must be a function')
     self._callables[funcName] = func
@@ -201,7 +201,7 @@ end
 
   Note: The request is expected to have an `id` field, which is used in the response.
 --]]
-function ZMQAsyncRemoteAPI:handleRequest(req)
+function ZMQRemoteAPI:handleRequest(req)
     assert(type(req.msg) == 'string', 'malformed request')
     local id = req.id
     assert(id ~= nil, 'request missing id')
@@ -269,7 +269,7 @@ end
       matches, the result is logged and ignored.
   The loop runs indefinitely until an error occurs or the socket is closed.
 --]]
-function ZMQAsyncRemoteAPI:handleRequests()
+function ZMQRemoteAPI:handleRequests()
     while true do
         local msg = self:recv(true)
         if not msg then break end
@@ -293,7 +293,7 @@ end
 
 -- Poll for one message with a timeout (in milliseconds).
 -- Returns true if a message was processed, false otherwise.
-function ZMQAsyncRemoteAPI:poll(timeoutMs)
+function ZMQRemoteAPI:poll(timeoutMs)
     timeoutMs = timeoutMs or 0
     -- Use simZMQ.poll if available, or fallback to non-blocking recv with sleep
     local msg
@@ -318,7 +318,7 @@ function ZMQAsyncRemoteAPI:poll(timeoutMs)
 end
 
 -- Internal: process a single decoded message (result or request)
-function ZMQAsyncRemoteAPI:_processMessage(msg)
+function ZMQRemoteAPI:_processMessage(msg)
     if msg.msg == 'result' then
         local pend = self._pending[msg.id]
         if pend then
@@ -336,7 +336,7 @@ function ZMQAsyncRemoteAPI:_processMessage(msg)
 end
 
 -- Process messages repeatedly until timeoutMs expires (or forever if < 0)
-function ZMQAsyncRemoteAPI:processRequests(timeoutMs)
+function ZMQRemoteAPI:processRequests(timeoutMs)
     timeoutMs = timeoutMs or -1
     if timeoutMs < 0 then
         while true do
@@ -354,7 +354,7 @@ end
   Low‑level send: CBOR‑encodes and sends the message.
   The message must be a table containing at least an `id` and `msg` field.
 --]]
-function ZMQAsyncRemoteAPI:send(msg)
+function ZMQRemoteAPI:send(msg)
     assert(self.socket)
     assert(type(msg) == 'table', 'bad type')
     self:log(2, 'sending:', msg)
@@ -393,7 +393,7 @@ end
   @param block: if true, blocks indefinitely; if false, uses NOBLOCK.
   Returns the decoded table, or nil if no message is available (non‑block).
 --]]
-function ZMQAsyncRemoteAPI:recv(block)
+function ZMQRemoteAPI:recv(block)
     assert(self.socket)
     if block then
         self:log(2, 'receiving... (block)')
@@ -411,4 +411,4 @@ function ZMQAsyncRemoteAPI:recv(block)
     return msg
 end
 
-return ZMQAsyncRemoteAPI
+return ZMQRemoteAPI

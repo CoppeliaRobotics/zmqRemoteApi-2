@@ -2,7 +2,7 @@ local sim = require 'sim-2'
 local simZMQ
 local cbor
 
-sim.ZMQAsyncRemoteAPI = require 'sim.ZMQAsyncRemoteAPI-2'
+sim.ZMQRemoteAPI = require 'sim.ZMQRemoteAPI-2'
 
 function sysCall_info()
     return {
@@ -12,7 +12,7 @@ end
 
 function sysCall_init()
     workers = {}
-    rapi_broker = sim.ZMQAsyncRemoteAPI{
+    rapi_broker = sim.ZMQRemoteAPI{
         name = 'server',
         server = true,
     }
