@@ -250,41 +250,34 @@ class ZMQRemoteAPI:
         If timeout is negative, the loop runs indefinitely until an error occurs or the socket is closed.
         If timeout is positive, it runs for at most the specified amount of seconds.
         """
+        def process_one_message():
+            msg = self.recv(block=True)
+            if msg:
+                self.handle_request(msg)
+                return True
+
         if timeout < 0:
-            while True:
-                msg = self.recv(block=True)
-                if msg:
-                    self.handle_request(msg)
-                else:
-                    break
+            while process_one_message():
+                pass
         else:
             start = time()
             while True:
                 remaining = timeout - (time() - start)
                 if remaining <= 0:
                     break
-                self.poll(min(remaining, 0.1))
+                if self.poll(min(remaining, 0.1)):
+                    process_one_message()
 
 
     def poll(self, timeout: float = 0) -> bool:
         """
-        Check for one incoming message and process it, without blocking longer than timeout.
-        Returns True if a message was processed, False if none arrived.
+        Low-level poll: poll for one incoming message with a timeout (in seconds).
+        Returns True if a message is available, False otherwise.
         """
         if not self._socket:
             raise RuntimeError('Socket not available')
 
-        # Use poll to check for incoming data with timeout
-        if self._socket.poll(int(timeout * 1000), zmq.POLLIN) == 0:
-            return False
-
-        msg = self.recv(block=True)
-        if msg is None:
-            return False
-
-        self.log(2, 'received:', msg)
-        self.handle_request(msg)
-        return True
+        return self._socket.poll(int(timeout * 1000), zmq.POLLIN) > 0
 
     def send(self, msg: Dict[str, Any]) -> None:
         """Low-level sender: CBOR-encodes the dict and sends it."""

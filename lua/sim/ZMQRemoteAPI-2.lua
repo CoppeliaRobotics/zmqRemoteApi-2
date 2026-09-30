@@ -240,36 +240,37 @@ end
   If timeout is positive, it runs for at most the specified amount of seconds.
 --]]
 function ZMQRemoteAPI:handleRequests(timeout)
+    local function processOneMessage()
+        local msg = self:recv(true)
+        if msg then
+            self:handleRequest(msg)
+            return true
+        end
+    end
+
     timeout = timeout or -1
     if timeout < 0 then
-        while true do
-            local msg = self:recv(true)
-            if msg then
-                self:handleRequest(msg)
-            else
-                break
-            end
-        end
+        while processOneMessage() do end
     else
         local start = sim.app.systemTime
         while true do
             local remaining = timeout - (sim.app.systemTime - start)
             if remaining <= 0 then break end
-            self:poll(math.min(remaining, 0.1))
+            if self:poll(math.min(remaining, 0.1)) then
+                processOneMessage()
+            end
         end
     end
 end
 
--- Poll for one message with a timeout (in milliseconds).
--- Returns true if a message was processed, false otherwise.
+--[[
+  Low-level poll: poll for one incoming message with a timeout (in seconds).
+  Returns true if a message is available, false otherwise.
+--]]
 function ZMQRemoteAPI:poll(timeout)
     assert(self.socket)
     timeout = timeout or 0
-    local events = simZMQ.poll({self.socket}, {simZMQ.POLLIN}, math.floor(timeout * 1000))
-    if events == 0 then return false end
-    local msg = self:recv(true)
-    self:handleRequest(msg)
-    return true
+    return simZMQ.poll({self.socket}, {simZMQ.POLLIN}, math.floor(timeout * 1000)) > 0
 end
 
 --[[
