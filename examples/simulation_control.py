@@ -32,10 +32,10 @@ scene.simulation.start()
 while scene.simulation.state != 17: noop()
 print('started simulation.')
 
-print(f'simulation time = {scene.simulation.time}')
+print(f'simulation time = {scene.simulation.time:.3f}')
 for i in range(5):
     if scene.simulation.time > 5: break
-    print(f'simulation time = {scene.simulation.time}')
+    print(f'simulation time = {scene.simulation.time:.3f}')
     noop()
 
 print('stopping simulation...')

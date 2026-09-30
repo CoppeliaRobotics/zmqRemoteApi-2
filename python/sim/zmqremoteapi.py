@@ -127,7 +127,7 @@ class ZMQRemoteAPI:
                 del self._pending[req_id]
                 if error:
                     raise Exception(result)
-                # Unpack the result exactly like the original REQ/REP implementation.
+                # Unpack the result:
                 if result is None:
                     return None
                 # Convert to tuple if it's a list or tuple; otherwise keep as-is.
