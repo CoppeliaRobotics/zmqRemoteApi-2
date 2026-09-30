@@ -3,10 +3,9 @@
 
   Architecture overview:
   -----------------------
-  This class replaces the REQ/REP‑based ZMQRemoteAPI with a fully asynchronous,
-  request‑ID driven design. Both client and server use DEALER sockets, allowing
-  either side to send a request (call) at any time, and responses are matched
-  by a unique message ID.
+  Fully asynchronous, request‑ID driven design. Both client and server use
+  DEALER sockets, allowing either side to send a request (call) at any time,
+  and responses are matched by a unique message ID.
 
   Key features:
     * No strict send/recv alternation – messages can flow in any order.
@@ -16,14 +15,20 @@
       on the remote side, will transparently call back to the local side.
     * The `call()` method blocks until its response arrives, but it processes
       any incoming messages (including other requests) while waiting.
+    * A `handleRequests()` loop is provided to process incoming messages
+      indefinitely (useful for servers or clients that need to respond to callbacks).
 
   Message protocol:
-    Requests:    { id = <unique>, msg = 'call'|'registerCallback',
+    Requests:    { id = <unique>, msg = 'call',
                    target = <int or nil>, func = <string>, args = <table> }
+
+                 { id = <unique>, msg = 'registerCallback',
+                   func = <string> }
+
     Responses:   { id = <same>, msg = 'result', error = <bool>,
                    result = <any> }
 
-  The `id` is a unique identifier (e.g., incremental counter) that
+  The `id` is a unique identifier (e.g.: incremental counter) that
   allows the receiver to match a response to the original request.
 
   Socket setup:
@@ -106,12 +111,6 @@ end
 
 --[[
   Helper: sends a request and waits for its response.
-  While waiting, it processes any incoming messages:
-    - If the message is a response (msg='result') for a pending request,
-      it updates that pending entry and wakes up the corresponding waiter.
-    - If the message is a request (msg='call' or 'registerCallback'),
-      it handles it via handleRequest (which may itself send requests and wait).
-  This allows re‑entrant callbacks and multiple pending requests.
 --]]
 function ZMQRemoteAPI:_sendRequestAndWait(req)
     local id = self:_nextId()
@@ -140,7 +139,6 @@ end
 --[[
   Remote procedure call.
   Sends a 'call' request and waits for the response.
-  The `target` parameter is unused in this basic implementation (see callMethod).
 --]]
 function ZMQRemoteAPI:call(target, funcName, ...)
     assert(type(funcName) == 'string', 'invalid function name type')

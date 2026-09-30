@@ -3,10 +3,9 @@ ZMQRemoteAPI – asynchronous, bidirectional RPC over ZMQ DEALER sockets.
 
 Architecture overview:
 ----------------------
-This class replaces the REQ/REP‑based ZMQRemoteAPI with a fully asynchronous,
-request‑ID driven design. Both client and server use DEALER sockets, allowing
-either side to send a request (call) at any time, and responses are matched
-by a unique message ID.
+Fully asynchronous, request‑ID driven design. Both client and server use
+DEALER sockets, allowing either side to send a request (call) at any time,
+and responses are matched by a unique message ID.
 
 Key features:
     * No strict send/recv alternation – messages can flow in any order.
@@ -20,13 +19,17 @@ Key features:
       indefinitely (useful for servers or clients that need to respond to callbacks).
 
 Message protocol:
-    Requests:    { 'id': <unique>, 'msg': 'call'|'registerCallback',
+    Requests:    { 'id': <unique>, 'msg': 'call',
                    'target': <int or None>, 'func': <str>, 'args': <tuple> }
+
+                 { 'id': <unique>, 'msg': 'registerCallback',
+                   'func': <str> }
+
     Responses:   { 'id': <same>, 'msg': 'result', 'error': <bool>,
                    'result': <any> }
 
-The `id` is a unique identifier (incremental counter) that allows the receiver
-to match a response to the original request.
+The `id` is a unique identifier (e.g.: incremental counter) that
+allows the receiver to match a response to the original request.
 
 Socket setup:
     * Server (self.server = True)  -> binds a DEALER socket.
@@ -38,9 +41,6 @@ Function lookup:
     Python callables. When a 'call' request arrives, the function is looked up
     in this table and executed. A 'registerCallback' request installs a wrapper
     that, when called, will send a remote 'call' to the other side.
-
-Note: Unlike the Lua version (which uses _G), this implementation uses
-      `self.callables` exclusively for function lookup on both sides.
 """
 
 import zmq
@@ -107,12 +107,7 @@ class ZMQRemoteAPI:
 
     def _send_request_and_wait(self, req: Dict[str, Any]) -> Any:
         """
-        Send a request and wait for its response, processing any incoming
-        messages (including other requests) while waiting.
-
-        This enables re‑entrant callbacks: while a request is pending, the
-        other side may send a 'call' request (callback), which we handle
-        immediately, allowing nested transactions.
+        Helper: sends a request and waits for its response.
         """
         req_id = self._next_id()
         req['id'] = req_id
@@ -144,7 +139,6 @@ class ZMQRemoteAPI:
     def call(self, target: Optional[int], func_name: str, *args: Any) -> Any:
         """
         Remote procedure call. Sends a 'call' request and waits for the response.
-        The `target` parameter is used for object‑oriented calls (see call_method).
         """
         assert isinstance(func_name, str), 'func_name must be a string'
         req = {'msg': 'call', 'target': target, 'func': func_name, 'args': args}
