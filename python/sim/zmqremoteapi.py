@@ -46,7 +46,6 @@ Function lookup:
 import zmq
 import cbor2
 import numpy as np
-from time import time
 from typing import Any, Callable, Dict, Optional, Tuple
 
 import sim
@@ -58,9 +57,11 @@ class ZMQRemoteAPI:
         self.name = opts.get('name')
         self.server = bool(opts.get('server', False))
         self.verbose = opts.get('verbose', 0)
-        self.lastSendTime = time()
-        self.lastRecvTime = time()
+        self.lastSendTime = 0
+        self.lastRecvTime = 0
         self.keepAliveInterval = 5
+        import time
+        self.time = time.time
 
         self._context = zmq.Context()
         # Both sides use DEALER to allow asynchronous bidirectional communication.
@@ -137,7 +138,7 @@ class ZMQRemoteAPI:
         Helper: sends a keep-alive message (noop) if needed.
         """
         if self.keepAliveInterval <= 0: return
-        if self.lastSendTime + self.keepAliveInterval < time():
+        if self.lastSendTime + self.keepAliveInterval < self.time():
             self.send({'msg': 'noop'})
 
     def isRemoteAlive(self):
@@ -146,7 +147,8 @@ class ZMQRemoteAPI:
         double of the keepAliveInterval).
         """
         if self.keepAliveInterval <= 0: return True
-        return self.lastRecvTime + 2 * self.keepAliveInterval >= time()
+        if self.lastRecvTime <= 0: return True
+        return self.lastRecvTime + 2 * self.keepAliveInterval >= self.time()
 
     def call(self, target: Optional[int], func_name: str, *args: Any) -> Any:
         """
@@ -269,9 +271,9 @@ class ZMQRemoteAPI:
         arrives within a short poll interval (max 0.1s).
         """
         if timeout:
-            start = time()
+            start = self.time()
             while True:
-                remaining = timeout - (time() - start)
+                remaining = timeout - (self.time() - start)
                 if remaining <= 0: return
                 self._sendKeepAlive()
                 if self.poll(min(remaining, 0.1)):
@@ -301,14 +303,14 @@ class ZMQRemoteAPI:
 
         return self._socket.poll(int(timeout * 1000), zmq.POLLIN) > 0
 
-    def send(self, msg: Dict[str, Any], block: bool = False) -> bool:
+    def send(self, msg: Dict[str, Any], block: bool = False) -> None:
         """Low-level sender: CBOR-encodes the dict and sends it."""
         if not self._socket:
             raise RuntimeError('Socket not available')
         self.log(2, 'sending:', msg)
         data = cbor2.dumps(msg)
         self._socket.send(data, flags=0 if block else zmq.DONTWAIT)
-        self.lastSendTime = time()
+        self.lastSendTime = self.time()
         self.log(2, 'sent')
 
     def recv(self, block: bool = True) -> Optional[Dict[str, Any]]:
@@ -335,7 +337,7 @@ class ZMQRemoteAPI:
             self.log(1, 'invalid CBOR data:', e)
             return None
         self.log(2, 'received:', msg)
-        self.lastRecvTime = time()
+        self.lastRecvTime = self.time()
         return msg
 
     # ----------------------------------------------------------------------

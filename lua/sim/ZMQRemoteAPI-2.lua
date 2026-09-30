@@ -55,9 +55,10 @@ function ZMQRemoteAPI:initialize(opts)
     self.name = opts.name
     self.server = not not opts.server
     self.verbose = tonumber(opts.verbose or 0)
-    self.lastSendTime = sim.app.systemTime
-    self.lastRecvTime = sim.app.systemTime
+    self.lastSendTime = 0
+    self.lastRecvTime = 0
     self.keepAliveInterval = 5
+    self.time = function() return sim.app.systemTime end
 
     local ctx = simZMQ.ctx_singleton()
     local host = opts.host or '127.0.0.1'
@@ -134,7 +135,7 @@ end
 --]]
 function ZMQRemoteAPI:_sendKeepAlive()
     if self.keepAliveInterval <= 0 then return end
-    if self.lastSendTime + self.keepAliveInterval < sim.app.systemTime then
+    if self.lastSendTime + self.keepAliveInterval < self.time() then
         self:send {msg = 'noop'}
     end
 end
@@ -145,7 +146,8 @@ end
 --]]
 function ZMQRemoteAPI:isRemoteAlive()
     if self.keepAliveInterval <= 0 then return true end
-    return self.lastRecvTime + 2 * self.keepAliveInterval >= sim.app.systemTime
+    if self.lastRecvTime <= 0 then return true end
+    return self.lastRecvTime + 2 * self.keepAliveInterval >= self.time()
 end
 
 --[[
@@ -266,9 +268,9 @@ end
 --]]
 function ZMQRemoteAPI:spinSome(timeout)
     if timeout then
-        local start = sim.app.systemTime
+        local start = self.time()
         while true do
-            local remaining = timeout - (sim.app.systemTime - start)
+            local remaining = timeout - (self.time() - start)
             if remaining <= 0 then return end
             self:_sendKeepAlive()
             if self:poll(math.min(remaining, 0.1)) then
@@ -338,7 +340,7 @@ function ZMQRemoteAPI:send(msg, block)
 
     local data = simCBOR.encode(msg)
     simZMQ.send(self.socket, data, block and 0 or simZMQ.DONTWAIT)
-    self.lastSendTime = sim.app.systemTime
+    self.lastSendTime = self.time()
 end
 
 --[[
@@ -360,7 +362,7 @@ function ZMQRemoteAPI:recv(block)
         return
     end
     self:log(2, 'received:', msg)
-    self.lastRecvTime = sim.app.systemTime
+    self.lastRecvTime = self.time()
     return msg
 end
 
