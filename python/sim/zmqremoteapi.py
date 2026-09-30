@@ -60,6 +60,7 @@ class ZMQRemoteAPI:
         self.verbose = opts.get('verbose', 0)
         self.lastSendTime = time()
         self.lastRecvTime = time()
+        self.keepAliveInterval = 5
 
         self._context = zmq.Context()
         # Both sides use DEALER to allow asynchronous bidirectional communication.
@@ -131,6 +132,22 @@ class ZMQRemoteAPI:
                 return tuple(result)
             return result
 
+    def _sendKeepAlive(self):
+        """
+        Helper: sends a keep-alive message (noop) if needed.
+        """
+        if self.keepAliveInterval <= 0: return
+        if self.lastSendTime + self.keepAliveInterval < time():
+            self.send({'msg': 'noop'})
+
+    def isRemoteAlive(self):
+        """
+        Helper: return True if remote is alive (i.e. has sent any message within
+        double of the keepAliveInterval).
+        """
+        if self.keepAliveInterval <= 0: return True
+        return self.lastRecvTime + 2 * self.keepAliveInterval >= time()
+
     def call(self, target: Optional[int], func_name: str, *args: Any) -> Any:
         """
         Remote procedure call. Sends a 'call' request and waits for the response.
@@ -153,12 +170,6 @@ class ZMQRemoteAPI:
         if not self.server:
             req = {'msg': 'registerCallback', 'func': func_name, 'global': global_}
             self._sendRequestAndWait(req)
-
-    def noop(self):
-        """
-        Dummy action to keep the remote alive.
-        """
-        self.send({'msg': 'noop'})
 
     def handleRequest(self, req: Dict[str, Any]) -> None:
         """
@@ -243,6 +254,7 @@ class ZMQRemoteAPI:
         Processes a single incoming message if one is available.
         Returns true if a message was received and handled, otherwise False.
         """
+        self._sendKeepAlive()
         msg = self.recv(block=False)
         if msg:
             self.handleRequest(msg)
@@ -256,16 +268,16 @@ class ZMQRemoteAPI:
         Continues processing as long as messages are available, but stops early if no message
         arrives within a short poll interval (max 0.1s).
         """
-        if timeout is None: timeout = float('inf')
-        start = time()
-        while True:
-            remaining = timeout - (time() - start)
-            if remaining <= 0:
-                return
-            if self.poll(min(remaining, 0.1)):
-                self.spinOnce()
-            else:
-                return
+        if timeout:
+            start = time()
+            while True:
+                remaining = timeout - (time() - start)
+                if remaining <= 0: return
+                self._sendKeepAlive()
+                if self.poll(min(remaining, 0.1)):
+                    self.spinOnce()
+        else:
+            while self.spinOnce(): pass
 
     def spinUntilComplete(self, req_id):
         """
@@ -289,13 +301,13 @@ class ZMQRemoteAPI:
 
         return self._socket.poll(int(timeout * 1000), zmq.POLLIN) > 0
 
-    def send(self, msg: Dict[str, Any]) -> None:
+    def send(self, msg: Dict[str, Any], block: bool = False) -> bool:
         """Low-level sender: CBOR-encodes the dict and sends it."""
         if not self._socket:
             raise RuntimeError('Socket not available')
         self.log(2, 'sending:', msg)
         data = cbor2.dumps(msg)
-        self._socket.send(data)
+        self._socket.send(data, flags=0 if block else zmq.DONTWAIT)
         self.lastSendTime = time()
         self.log(2, 'sent')
 

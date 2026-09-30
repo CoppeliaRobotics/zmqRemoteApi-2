@@ -21,26 +21,20 @@ def s_actuation():
 rapi.registerCallback('sysCall_sensing', s_sensing, True)
 rapi.registerCallback('sysCall_actuation', s_actuation, True)
 
-def noop():
-    if rapi.lastSendTime + 5 < time():
-        # keep worker alive
-        rapi.noop()
-    rapi.spinSome(0.010)
-
 print('starting simulation...')
 scene.simulation.start()
-while scene.simulation.state != 17: noop()
+while scene.simulation.state != 17: rapi.spinSome()
 print('started simulation.')
 
 print(f'simulation time = {scene.simulation.time:.3f}')
 for i in range(5):
     if scene.simulation.time > 5: break
     print(f'simulation time = {scene.simulation.time:.3f}')
-    noop()
+    rapi.spinSome()
 
 print('stopping simulation...')
 scene.simulation.stop()
-while scene.simulation.state != 0: noop()
+while scene.simulation.state != 0: rapi.spinSome()
 print('stopped simulation.')
 
-while 1: noop() # keep client alive & running
+while 1: rapi.spinSome() # keep client alive & running

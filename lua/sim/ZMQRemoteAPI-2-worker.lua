@@ -2,7 +2,6 @@ import 'sim-2'
 import 'sim.ZMQRemoteAPI-2'
 
 assert(WORKER_PORT, 'WORKER_PORT not defined')
-IDLE_TIMEOUT = IDLE_TIMEOUT or 10 -- seconds before termination after no received messages
 
 function sysCall_init()
     rapi = sim.ZMQRemoteAPI{
@@ -16,18 +15,12 @@ function sysCall_init()
 end
 
 function sysCall_thread()
-    while true do
+    while rapi:isRemoteAlive() do
         rapi:spinSome()
-
-        -- terminate if inactive:
-        local termTime = rapi.lastRecvTime + IDLE_TIMEOUT
-        if sim.app.systemTime >= termTime then
-            rapi:log(1, 'terminating worker script (handle=' .. sim.self.handle ..') because of inactivity')
-            sim.self:remove()
-        end
-
         sim.self:yield()
     end
+    rapi:log(1, 'terminating worker script (handle=' .. sim.self.handle ..') because of inactivity')
+    sim.self:remove()
 end
 
 function sysCall_cleanup()

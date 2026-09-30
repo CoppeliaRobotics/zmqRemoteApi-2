@@ -57,6 +57,7 @@ function ZMQRemoteAPI:initialize(opts)
     self.verbose = tonumber(opts.verbose or 0)
     self.lastSendTime = sim.app.systemTime
     self.lastRecvTime = sim.app.systemTime
+    self.keepAliveInterval = 5
 
     local ctx = simZMQ.ctx_singleton()
     local host = opts.host or '127.0.0.1'
@@ -129,6 +130,25 @@ function ZMQRemoteAPI:_sendRequestAndWait(req)
 end
 
 --[[
+  Helper: sends a keep-alive message (noop) if needed.
+--]]
+function ZMQRemoteAPI:_sendKeepAlive()
+    if self.keepAliveInterval <= 0 then return end
+    if self.lastSendTime + self.keepAliveInterval < sim.app.systemTime then
+        self:send {msg = 'noop'}
+    end
+end
+
+--[[
+  Helper: return true if remote is alive (i.e. has sent any message within
+  double of the keepAliveInterval).
+--]]
+function ZMQRemoteAPI:isRemoteAlive()
+    if self.keepAliveInterval <= 0 then return true end
+    return self.lastRecvTime + 2 * self.keepAliveInterval >= sim.app.systemTime
+end
+
+--[[
   Remote procedure call.
   Sends a 'call' request and waits for the response.
 --]]
@@ -155,13 +175,6 @@ function ZMQRemoteAPI:registerCallback(funcName, func, global_)
         local req = { msg = 'registerCallback', func = funcName, global = not not global_ }
         self:_sendRequestAndWait(req)
     end
-end
-
---[[
-  Dummy action to keep the remote alive.
---]]
-function ZMQRemoteAPI:noop()
-    self:send {msg = 'noop'}
 end
 
 --[[
@@ -236,6 +249,7 @@ end
   Returns true if a message was received and handled, otherwise false.
 --]]
 function ZMQRemoteAPI:spinOnce()
+    self:_sendKeepAlive()
     local msg = self:recv(false)
     if msg then
         self:handleRequest(msg)
@@ -251,16 +265,18 @@ end
   arrives within a short poll interval (max 0.1s).
 --]]
 function ZMQRemoteAPI:spinSome(timeout)
-    timeout = timeout or 1/0
-    local start = sim.app.systemTime
-    while true do
-        local remaining = timeout - (sim.app.systemTime - start)
-        if remaining <= 0 then return end
-        if self:poll(math.min(remaining, 0.1)) then
-            self:spinOnce()
-        else
-            return
+    if timeout then
+        local start = sim.app.systemTime
+        while true do
+            local remaining = timeout - (sim.app.systemTime - start)
+            if remaining <= 0 then return end
+            self:_sendKeepAlive()
+            if self:poll(math.min(remaining, 0.1)) then
+                self:spinOnce()
+            end
         end
+    else
+        while self:spinOnce() do end
     end
 end
 
@@ -292,7 +308,7 @@ end
   Low‑level send: CBOR‑encodes and sends the message.
   The message must be a table containing at least an `id` and `msg` field.
 --]]
-function ZMQRemoteAPI:send(msg)
+function ZMQRemoteAPI:send(msg, block)
     assert(self.socket)
     assert(type(msg) == 'table', 'bad type')
     self:log(2, 'sending:', msg)
@@ -321,9 +337,8 @@ function ZMQRemoteAPI:send(msg)
     end
 
     local data = simCBOR.encode(msg)
-    simZMQ.send(self.socket, data, 0)
+    simZMQ.send(self.socket, data, block and 0 or simZMQ.DONTWAIT)
     self.lastSendTime = sim.app.systemTime
-    self:log(2, 'sent')
 end
 
 --[[
