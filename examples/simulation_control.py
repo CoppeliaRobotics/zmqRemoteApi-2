@@ -18,14 +18,14 @@ def s_sensing():
 def s_actuation():
     print(f'actuation phase (t={scene.simulation.time:.3f})...')
 
-rapi.register_callback('sysCall_sensing', s_sensing, True)
-rapi.register_callback('sysCall_actuation', s_actuation, True)
+rapi.registerCallback('sysCall_sensing', s_sensing, True)
+rapi.registerCallback('sysCall_actuation', s_actuation, True)
 
 def noop():
-    if rapi.last_send_time + 5 < time():
+    if rapi.lastSendTime + 5 < time():
         # keep worker alive
         rapi.call(None, 'noop')
-    rapi.handle_requests(0.010)
+    rapi.handleRequests(0.010)
 
 print('starting simulation...')
 scene.simulation.start()

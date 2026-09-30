@@ -73,7 +73,7 @@ function ZMQRemoteAPI:initialize(opts)
     -- Tables for pending requests and local callable functions.
     self._pending = {}          -- id -> { done, result, error }
     self._callables = {}        -- funcName -> function
-    self._id_counter = 0        -- simple incremental ID generator
+    self.__nextId = 0           -- simple incremental ID generator
 end
 
 function ZMQRemoteAPI:cleanup()
@@ -105,8 +105,8 @@ end
   For production, consider using UUID or a combination with clientID.
 --]]
 function ZMQRemoteAPI:_nextId()
-    self._id_counter = self._id_counter + 1
-    return self._id_counter
+    self.__nextId = self.__nextId + 1
+    return self.__nextId
 end
 
 --[[

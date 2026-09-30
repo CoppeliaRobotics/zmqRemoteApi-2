@@ -11,11 +11,11 @@ Key features:
     * No strict send/recv alternation – messages can flow in any order.
     * Re‑entrant callbacks: while processing a call, the remote side can invoke
       a callback, and that callback can itself invoke another callback, etc.
-    * Both sides can register callbacks (register_callback) which, when invoked
+    * Both sides can register callbacks (registerCallback) which, when invoked
       on the remote side, will transparently call back to the local side.
     * The `call()` method blocks until its response arrives, but it processes
       any incoming messages (including other requests) while waiting.
-    * A `handle_requests()` loop is provided to process incoming messages
+    * A `handleRequests()` loop is provided to process incoming messages
       indefinitely (useful for servers or clients that need to respond to callbacks).
 
 Message protocol:
@@ -58,8 +58,8 @@ class ZMQRemoteAPI:
         self.name = opts.get('name')
         self.server = bool(opts.get('server', False))
         self.verbose = opts.get('verbose', 0)
-        self.last_send_time = time()
-        self.last_recv_time = time()
+        self.lastSendTime = time()
+        self.lastRecvTime = time()
 
         self._context = zmq.Context()
         # Both sides use DEALER to allow asynchronous bidirectional communication.
@@ -77,7 +77,7 @@ class ZMQRemoteAPI:
 
         # Pending requests: id -> {'done': bool, 'result': Any, 'error': bool}
         self._pending: Dict[int, Dict[str, Any]] = {}
-        self._id_counter = 0
+        self.__nextId = 0
 
     def cleanup(self) -> None:
         """Close the socket and terminate the ZMQ context."""
@@ -97,19 +97,19 @@ class ZMQRemoteAPI:
             print(tag, *args)
 
     # XXX: This method must be overridden if object‑oriented calls with `target` are needed.
-    def call_method(self, target: int, method_name: str, *args: Any) -> Any:
-        raise NotImplementedError('call_method must be overridden for target-based calls')
+    def callMethod(self, target: int, method_name: str, *args: Any) -> Any:
+        raise NotImplementedError('callMethod must be overridden for target-based calls')
 
-    def _next_id(self) -> int:
+    def _nextId(self) -> int:
         """Generate a unique request ID (simple incremental counter)."""
-        self._id_counter += 1
-        return self._id_counter
+        self.__nextId += 1
+        return self.__nextId
 
-    def _send_request_and_wait(self, req: Dict[str, Any]) -> Any:
+    def _sendRequestAndWait(self, req: Dict[str, Any]) -> Any:
         """
         Helper: sends a request and waits for its response.
         """
-        req_id = self._next_id()
+        req_id = self._nextId()
         req['id'] = req_id
         self._pending[req_id] = {'done': False, 'result': None, 'error': False}
         self.send(req)
@@ -134,7 +134,7 @@ class ZMQRemoteAPI:
 
             msg = self.recv(block=True)
             if msg:
-                self.handle_request(msg)
+                self.handleRequest(msg)
 
     def call(self, target: Optional[int], func_name: str, *args: Any) -> Any:
         """
@@ -142,9 +142,9 @@ class ZMQRemoteAPI:
         """
         assert isinstance(func_name, str), 'func_name must be a string'
         req = {'msg': 'call', 'target': target, 'func': func_name, 'args': args}
-        return self._send_request_and_wait(req)
+        return self._sendRequestAndWait(req)
 
-    def register_callback(self, func_name: str, func: Callable, global_: bool = False) -> None:
+    def registerCallback(self, func_name: str, func: Callable, global_: bool = False) -> None:
         """
         Registers a local function as a callback on the remote side.
         The remote side will store a wrapper that, when called, will invoke this
@@ -157,16 +157,16 @@ class ZMQRemoteAPI:
 
         if not self.server:
             req = {'msg': 'registerCallback', 'func': func_name, 'global': global_}
-            self._send_request_and_wait(req)
+            self._sendRequestAndWait(req)
 
-    def handle_request(self, req: Dict[str, Any]) -> None:
+    def handleRequest(self, req: Dict[str, Any]) -> None:
         """
         Process a single incoming request (call or registerCallback).
         This is the core dispatcher on both client and server.
 
         For 'call':
             - Looks up the function in self.callables.
-            - If `target` is given, uses self.call_method (must be overridden).
+            - If `target` is given, uses self.callMethod (must be overridden).
             - Executes the function, catches errors, and sends a 'result' response
               with the same `id` as the request.
 
@@ -193,7 +193,7 @@ class ZMQRemoteAPI:
             try:
                 if req.get('target') is not None:
                     # Object‑oriented call – must be implemented by a subclass.
-                    result = self.call_method(req['target'], func_name, *args)
+                    result = self.callMethod(req['target'], func_name, *args)
                 else:
                     func = self.callables.get(func_name)
                     if func is None:
@@ -238,20 +238,20 @@ class ZMQRemoteAPI:
         else:
             self.log(1, f'unsupported message: {msg}')
 
-    def handle_requests(self, timeout: float = -1) -> None:
+    def handleRequests(self, timeout: float = -1) -> None:
         """
         Main loop for processing incoming requests.
         If timeout is negative, the loop runs indefinitely until an error occurs or the socket is closed.
         If timeout is positive, it runs for at most the specified amount of seconds.
         """
-        def process_one_message():
+        def processOneMessage():
             msg = self.recv(block=True)
             if msg:
-                self.handle_request(msg)
+                self.handleRequest(msg)
                 return True
 
         if timeout < 0:
-            while process_one_message():
+            while processOneMessage():
                 pass
         else:
             start = time()
@@ -260,7 +260,7 @@ class ZMQRemoteAPI:
                 if remaining <= 0:
                     break
                 if self.poll(min(remaining, 0.1)):
-                    process_one_message()
+                    processOneMessage()
 
 
     def poll(self, timeout: float = 0) -> bool:
@@ -280,7 +280,7 @@ class ZMQRemoteAPI:
         self.log(2, 'sending:', msg)
         data = cbor2.dumps(msg)
         self._socket.send(data)
-        self.last_send_time = time()
+        self.lastSendTime = time()
         self.log(2, 'sent')
 
     def recv(self, block: bool = True) -> Optional[Dict[str, Any]]:
@@ -307,7 +307,7 @@ class ZMQRemoteAPI:
             self.log(1, 'invalid CBOR data:', e)
             return None
         self.log(2, 'received:', msg)
-        self.last_recv_time = time()
+        self.lastRecvTime = time()
         return msg
 
     # ----------------------------------------------------------------------
