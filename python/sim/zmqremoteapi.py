@@ -15,8 +15,6 @@ Key features:
       on the remote side, will transparently call back to the local side.
     * The `call()` method blocks until its response arrives, but it processes
       any incoming messages (including other requests) while waiting.
-    * A `handleRequests()` loop is provided to process incoming messages
-      indefinitely (useful for servers or clients that need to respond to callbacks).
 
 Message protocol:
     Requests:    { 'id': <unique>, 'msg': 'call',
@@ -113,28 +111,23 @@ class ZMQRemoteAPI:
         req['id'] = req_id
         self._pending[req_id] = {'done': False, 'result': None, 'error': False}
         self.send(req)
-
-        while True:
-            pending = self._pending.get(req_id)
-            if pending and pending['done']:
-                result = pending['result']
-                error = pending['error']
-                del self._pending[req_id]
-                if error:
-                    raise Exception(result)
-                # Unpack the result:
-                if result is None:
-                    return None
-                # Convert to tuple if it's a list or tuple; otherwise keep as-is.
-                if isinstance(result, (list, tuple)):
-                    if len(result) == 1:
-                        return result[0]
-                    return tuple(result)
-                return result
-
-            msg = self.recv(block=True)
-            if msg:
-                self.handleRequest(msg)
+        self.spinUntilComplete(req_id)
+        pending = self._pending.get(req_id)
+        assert pending and pending['done']
+        del self._pending[req_id]
+        if pending['error']:
+            raise Exception(pending['result'])
+        else:
+            result = pending['result']
+            # Unpack the result:
+            if result is None:
+                return None
+            # Convert to tuple if it's a list or tuple; otherwise keep as-is.
+            if isinstance(result, (list, tuple)):
+                if len(result) == 1:
+                    return result[0]
+                return tuple(result)
+            return result
 
     def call(self, target: Optional[int], func_name: str, *args: Any) -> Any:
         """
@@ -238,30 +231,46 @@ class ZMQRemoteAPI:
         else:
             self.log(1, f'unsupported message: {msg}')
 
-    def handleRequests(self, timeout: float = -1) -> None:
+    def spinOnce(self):
         """
-        Main loop for processing incoming requests.
-        If timeout is negative, the loop runs indefinitely until an error occurs or the socket is closed.
-        If timeout is positive, it runs for at most the specified amount of seconds.
+        Processes a single incoming message if one is available.
+        Returns true if a message was received and handled, otherwise False.
         """
-        def processOneMessage():
-            msg = self.recv(block=True)
-            if msg:
-                self.handleRequest(msg)
-                return True
-
-        if timeout < 0:
-            while processOneMessage():
-                pass
+        msg = self.recv(block=False)
+        if msg:
+            self.handleRequest(msg)
+            return True
         else:
-            start = time()
-            while True:
-                remaining = timeout - (time() - start)
-                if remaining <= 0:
-                    break
-                if self.poll(min(remaining, 0.1)):
-                    processOneMessage()
+            return False
 
+    def spinSome(self, timeout: float | None = None):
+        """
+        Processes incoming messages for up to 'timeout' seconds (default: indefinitely).
+        Continues processing as long as messages are available, but stops early if no message
+        arrives within a short poll interval (max 0.1s).
+        """
+        if timeout is None: timeout = float('inf')
+        start = time()
+        while True:
+            remaining = timeout - (time() - start)
+            if remaining <= 0:
+                return
+            if self.poll(min(remaining, 0.1)):
+                self.spinOnce()
+            else:
+                return
+
+    def spinUntilComplete(self, req_id):
+        """
+        Blocks and processes incoming messages until the request with the given 'req_id'
+        is marked as complete in the pending requests table.
+        """
+        assert(req_id)
+        while True:
+            pending = self._pending.get(req_id)
+            if pending and pending['done']:
+                return
+            self.spinOnce()
 
     def poll(self, timeout: float = 0) -> bool:
         """

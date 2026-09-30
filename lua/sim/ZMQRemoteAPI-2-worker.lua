@@ -21,7 +21,7 @@ end
 
 function sysCall_thread()
     while true do
-        rapi:handleRequests(0.010)
+        rapi:spinSome()
 
         -- terminate if inactive:
         local termTime = rapi.lastRecvTime + IDLE_TIMEOUT
@@ -37,4 +37,5 @@ end
 function sysCall_cleanup()
     rapi:cleanup()
     rapi = nil
+    sim.self:remove()
 end

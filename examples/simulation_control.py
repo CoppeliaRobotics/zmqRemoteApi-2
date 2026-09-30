@@ -25,7 +25,7 @@ def noop():
     if rapi.lastSendTime + 5 < time():
         # keep worker alive
         rapi.call(None, 'noop')
-    rapi.handleRequests(0.010)
+    rapi.spinSome(0.010)
 
 print('starting simulation...')
 scene.simulation.start()

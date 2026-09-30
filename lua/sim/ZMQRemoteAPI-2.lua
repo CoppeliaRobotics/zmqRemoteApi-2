@@ -15,8 +15,6 @@
       on the remote side, will transparently call back to the local side.
     * The `call()` method blocks until its response arrives, but it processes
       any incoming messages (including other requests) while waiting.
-    * A `handleRequests()` loop is provided to process incoming messages
-      indefinitely (useful for servers or clients that need to respond to callbacks).
 
   Message protocol:
     Requests:    { id = <unique>, msg = 'call',
@@ -113,26 +111,18 @@ end
   Helper: sends a request and waits for its response.
 --]]
 function ZMQRemoteAPI:_sendRequestAndWait(req)
-    local id = self:_nextId()
-    req.id = id
-    self._pending[id] = { done = false, result = nil, error = nil }
+    local req_id = self:_nextId()
+    req.id = req_id
+    self._pending[req_id] = { done = false, result = nil, error = nil }
     self:send(req)
-
-    while true do
-        local pending = self._pending[id]
-        if pending.done then
-            self._pending[id] = nil
-            if pending.error then
-                error(pending.result)
-            else
-                return table.unpack(pending.result)
-            end
-        end
-
-        local msg = self:recv(true)
-        if msg then
-            self:handleRequest(msg)
-        end
+    self:spinUntilComplete(req_id)
+    local pending = self._pending[req_id]
+    assert(pending and pending.done)
+    self._pending[req_id] = nil
+    if pending.error then
+        error(pending.result)
+    else
+        return table.unpack(pending.result)
     end
 end
 
@@ -233,31 +223,49 @@ function ZMQRemoteAPI:handleRequest(req)
 end
 
 --[[
-  Main loop for processing incoming requests.
-  If timeout is negative, the loop runs indefinitely until an error occurs or the socket is closed.
-  If timeout is positive, it runs for at most the specified amount of seconds.
+  Processes a single incoming message if one is available.
+  Returns true if a message was received and handled, otherwise false.
 --]]
-function ZMQRemoteAPI:handleRequests(timeout)
-    local function processOneMessage()
-        local msg = self:recv(true)
-        if msg then
-            self:handleRequest(msg)
-            return true
+function ZMQRemoteAPI:spinOnce()
+    local msg = self:recv(false)
+    if msg then
+        self:handleRequest(msg)
+        return true
+    else
+        return false
+    end
+end
+
+--[[
+  Processes incoming messages for up to 'timeout' seconds (default: indefinitely).
+  Continues processing as long as messages are available, but stops early if no message
+  arrives within a short poll interval (max 0.1s).
+--]]
+function ZMQRemoteAPI:spinSome(timeout)
+    timeout = timeout or 1/0
+    local start = sim.app.systemTime
+    while true do
+        local remaining = timeout - (sim.app.systemTime - start)
+        if remaining <= 0 then return end
+        if self:poll(math.min(remaining, 0.1)) then
+            self:spinOnce()
+        else
+            return
         end
     end
+end
 
-    timeout = timeout or -1
-    if timeout < 0 then
-        while processOneMessage() do end
-    else
-        local start = sim.app.systemTime
-        while true do
-            local remaining = timeout - (sim.app.systemTime - start)
-            if remaining <= 0 then break end
-            if self:poll(math.min(remaining, 0.1)) then
-                processOneMessage()
-            end
+--[[
+  Blocks and processes incoming messages until the request with the given 'req_id'
+  is marked as complete in the pending requests table.
+--]]
+function ZMQRemoteAPI:spinUntilComplete(req_id)
+    while true do
+        local pending = self._pending[req_id]
+        if pending.done then
+            return
         end
+        self:spinOnce()
     end
 end
 

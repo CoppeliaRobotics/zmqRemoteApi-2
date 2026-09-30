@@ -22,7 +22,7 @@ end
 
 function sysCall_thread()
     while true do
-        rapi_broker:handleRequests()
+        rapi_broker:spinSome()
         sim.self:yield()
     end
 end
