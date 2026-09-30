@@ -23,6 +23,8 @@
                  { id = <unique>, msg = 'registerCallback',
                    func = <string> }
 
+                 { msg = 'noop' }
+
     Responses:   { id = <same>, msg = 'result', error = <bool>,
                    result = <any> }
 
@@ -156,6 +158,13 @@ function ZMQRemoteAPI:registerCallback(funcName, func, global_)
 end
 
 --[[
+  Dummy action to keep the remote alive.
+--]]
+function ZMQRemoteAPI:noop()
+    self:send {msg = 'noop'}
+end
+
+--[[
   Handles an incoming request (call or registerCallback).
   This is the core dispatcher on both client and server.
 
@@ -176,7 +185,6 @@ function ZMQRemoteAPI:handleRequest(req)
     local msg = req.msg
     assert(type(msg) == 'string', 'malformed request')
     local req_id = req.id
-    assert(req_id ~= nil, 'request missing id')
 
     if msg == 'call' then
         local ok, result = pcall(function()
@@ -217,6 +225,7 @@ function ZMQRemoteAPI:handleRequest(req)
         else
             self:log(1, 'received result for unknown id:', req_id)
         end
+    elseif msg == 'noop' then
     else
         self:log(1, 'unsupported message:', msg)
     end

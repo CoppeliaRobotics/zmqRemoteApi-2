@@ -4,9 +4,6 @@ import 'sim.ZMQRemoteAPI-2'
 assert(WORKER_PORT, 'WORKER_PORT not defined')
 IDLE_TIMEOUT = IDLE_TIMEOUT or 10 -- seconds before termination after no received messages
 
-function noop()
-end
-
 function sysCall_init()
     rapi = sim.ZMQRemoteAPI{
         name = 'worker-' .. WORKER_PORT,
@@ -14,7 +11,6 @@ function sysCall_init()
         server = true,
         verbose = 2,
     }
-    rapi:registerCallback('noop', noop)
     rapi.callMethod = sim.callMethod
     rapi:log(1, 'spawned worker script (handle=' .. sim.self.handle ..')')
 end

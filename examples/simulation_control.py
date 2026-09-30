@@ -24,7 +24,7 @@ rapi.registerCallback('sysCall_actuation', s_actuation, True)
 def noop():
     if rapi.lastSendTime + 5 < time():
         # keep worker alive
-        rapi.call(None, 'noop')
+        rapi.noop()
     rapi.spinSome(0.010)
 
 print('starting simulation...')

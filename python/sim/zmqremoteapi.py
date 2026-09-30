@@ -23,6 +23,8 @@ Message protocol:
                  { 'id': <unique>, 'msg': 'registerCallback',
                    'func': <str> }
 
+                 { 'msg': 'noop' }
+
     Responses:   { 'id': <same>, 'msg': 'result', 'error': <bool>,
                    'result': <any> }
 
@@ -152,6 +154,12 @@ class ZMQRemoteAPI:
             req = {'msg': 'registerCallback', 'func': func_name, 'global': global_}
             self._sendRequestAndWait(req)
 
+    def noop(self):
+        """
+        Dummy action to keep the remote alive.
+        """
+        self.send({'msg': 'noop'})
+
     def handleRequest(self, req: Dict[str, Any]) -> None:
         """
         Process a single incoming request (call or registerCallback).
@@ -175,10 +183,7 @@ class ZMQRemoteAPI:
             self.log(1, 'malformed request: missing msg')
             return
 
-        req_id = req.get('id')
-        if req_id is None:
-            self.log(1, 'request missing id')
-            return
+        req_id = req.get('id', -1)
 
         if msg == 'call':
             func_name: str = req['func']
@@ -228,6 +233,8 @@ class ZMQRemoteAPI:
                 pend['done'] = True
             else:
                 self.log(1, f'received result for unknown id: {req_id}')
+        elif msg == 'noop':
+            pass
         else:
             self.log(1, f'unsupported message: {msg}')
 
