@@ -6,12 +6,19 @@ rapi = ZMQRemoteAPI({'port': port})
 sim.Object._callMethod = rapi.call
 
 def cb():
-    return 'xxx'
+    return 'cb'
+
+def cb2(f):
+    def cb3():
+        return 'cb3'
+    return 'cb2-' + f(cb3)
 
 print('create object...')
 obj = sim.app.createObject({'type': 'test'})
 print(obj)
-print('obj.foo', obj.foo)
-print('invoke obj.bar(cb)')
-res = obj.bar(cb)
+print('invoke obj.testCallback(cb)')
+res = obj.testCallback(cb)
+print('result:', res)
+print('invoke obj.testReentrantCallback(cb2)')
+res = obj.testReentrantCallback(cb2)
 print('result:', res)
