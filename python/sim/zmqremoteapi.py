@@ -407,7 +407,7 @@ class ZMQRemoteAPI:
 
     def _encode_default(self, encoder: cbor2.CBOREncoder, value: Any) -> None:
         if callable(value):
-            name = f'@tmpcallback_{id(value)}'
+            name = f'@tmpcallback_function_{id(value)}'
 
             if name not in self.callables:
                 self.callables[name] = value

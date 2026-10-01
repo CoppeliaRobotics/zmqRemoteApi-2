@@ -339,7 +339,7 @@ function ZMQRemoteAPI:send(msg, block)
     end
     local encodeMap = {
         ['function'] = function(f)
-            local name = '@tmpcallback_' .. tostring(f)
+            local name = '@tmpcallback_' .. string.functostring(f)
             if self._callables[name] == nil then
                 self._callables[name] = f
             end
