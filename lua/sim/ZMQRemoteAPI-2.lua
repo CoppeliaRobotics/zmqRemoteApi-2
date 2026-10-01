@@ -337,8 +337,16 @@ function ZMQRemoteAPI:send(msg, block)
     if nfixed > 0 then
         self:log(2, 'sending (fixed ' .. nfixed .. ' keys):', msg)
     end
-
-    local data = simCBOR.encode(msg)
+    local encodeMap = {
+        ['function'] = function(f)
+            local name = '@tmpcallback_' .. tostring(f)
+            if self._callables[name] == nil then
+                self._callables[name] = f
+            end
+            return simCBOR.encode(0xC0, 4294999997) .. simCBOR.encode(name)
+        end,
+    }
+    local data = simCBOR.encode(msg, {encodeMap = encodeMap})
     simZMQ.send(self.socket, data, block and 0 or simZMQ.DONTWAIT)
     self.lastSendTime = self.time()
 end
@@ -355,8 +363,14 @@ function ZMQRemoteAPI:recv(block)
     end
     local r, data = simZMQ.recv(self.socket, block and 0 or simZMQ.NOBLOCK)
     if r == -1 then return end
-
-    local ok, msg = pcall(simCBOR.decode, data)
+    local typeTags = {
+        TAG_4294999997 = function(value)
+            return function(...)
+                return self:call(nil, value, ...)
+            end
+        end,
+    }
+    local ok, msg = pcall(simCBOR.decode, data, {typeTags = typeTags})
     if not ok then
         self:log(1, 'invalid CBOR data')
         return

@@ -308,7 +308,7 @@ class ZMQRemoteAPI:
         if not self._socket:
             raise RuntimeError('Socket not available')
         self.log(2, 'sending:', msg)
-        data = cbor2.dumps(msg)
+        data = cbor2.dumps(msg, default=self._encode_default)
         self._socket.send(data, flags=0 if block else zmq.DONTWAIT)
         self.lastSendTime = self.time()
         self.log(2, 'sent')
@@ -340,11 +340,11 @@ class ZMQRemoteAPI:
         self.lastRecvTime = self.time()
         return msg
 
-    # ----------------------------------------------------------------------
-    # CBOR tag hook for decoding special types (numpy arrays, sim objects, etc.)
-    # This is identical to the original ZMQRemoteAPI.
-    # ----------------------------------------------------------------------
     def _tag_hook(self, decoder: cbor2.CBORDecoder, tag: cbor2.CBORTag) -> Any:
+        """
+        CBOR tag hook for decoding special types (numpy arrays, sim objects, etc.)
+        This is identical to the original ZMQRemoteAPI.
+        """
         if tag.tag == 40:
             # ND-array
             dims, data = tag.value
@@ -400,4 +400,22 @@ class ZMQRemoteAPI:
         if tag.tag == 4294980500:
             # pose
             return np.array(tag.value, dtype=np.float64)
+        if tag.tag == 4294999997:
+            # zmq remote callback
+            return lambda *args: self.call(None, tag.value, *args)
         return tag
+
+    def _encode_default(self, encoder: cbor2.CBOREncoder, value: Any) -> None:
+        if callable(value):
+            name = f'@tmpcallback_{id(value)}'
+
+            if name not in self.callables:
+                self.callables[name] = value
+
+            ## If we are inside _sendRequestAndWait, remember this temporary callback
+            #if getattr(self, '_callback_scope', None) is not None:
+            #    self._callback_scope.append(name)
+
+            encoder.encode(cbor2.CBORTag(4294999997, name))
+        else:
+            raise cbor2.CBOREncodeTypeError(f'cannot serialize type {type(value)}')
