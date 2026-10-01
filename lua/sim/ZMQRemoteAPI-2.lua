@@ -343,7 +343,8 @@ function ZMQRemoteAPI:send(msg, block)
             if self._callables[name] == nil then
                 self._callables[name] = f
             end
-            return simCBOR.encode(0xC0, 4294999997) .. simCBOR.encode(name)
+            local cbor_c = require 'org.conman.cbor_c'
+            return cbor_c.encode(0xC0, 4294999997) .. simCBOR.encode(name)
         end,
     }
     local data = simCBOR.encode(msg, {encodeMap = encodeMap})
