@@ -15,6 +15,7 @@ function sysCall_init()
     rapi_broker = sim.ZMQRemoteAPI{
         name = 'server',
         server = true,
+        verbose = sim.app.customData['zmqRemoteApi2.verbose'] or 0,
     }
     rapi_broker:registerCallback('getPort', getPort)
     rapi_broker:log(1, 'server started')
