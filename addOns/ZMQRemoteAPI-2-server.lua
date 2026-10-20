@@ -28,12 +28,17 @@ function sysCall_thread()
     end
 end
 
+function sysCall_addOnScriptSuspend()
+    return {cmd = 'cleanup'}
+end
+
 function sysCall_cleanup()
     for client_id, worker in pairs(workers) do
         worker.script:remove()
     end
     workers = {}
     rapi_broker:cleanup()
+    rapi_broker:log(1, 'server stopped')
     rapi_broker = nil
 end
 
