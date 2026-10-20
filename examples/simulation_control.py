@@ -3,7 +3,7 @@ from sim.zmqremoteapi import ZMQRemoteAPI
 from time import time
 
 rapi = ZMQRemoteAPI({'name': 'client-handshake', 'server': False, 'verbose': 0})
-port = rapi.call(None, 'getPort')
+port = rapi.call(None, 'spawnWorker')
 print('port:', port)
 
 rapi = ZMQRemoteAPI({'name': 'client', 'server': False, 'port': port, 'verbose': 0})

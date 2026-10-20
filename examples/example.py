@@ -6,7 +6,7 @@ except ModuleNotFoundError:
 
 # handshake to get a port number:
 rapi = ZMQRemoteAPI({'name': 'handshake', 'server': False})
-port = rapi.call(None, 'getPort')
+port = rapi.call(None, 'spawnWorker')
 # connect to port:
 rapi = ZMQRemoteAPI({'name': 'client', 'server': False, 'port': port})
 

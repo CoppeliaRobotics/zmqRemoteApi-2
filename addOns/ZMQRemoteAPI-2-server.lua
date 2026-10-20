@@ -37,8 +37,14 @@ function sysCall_cleanup()
 end
 
 function getPort()
+    local port = nextWorkerPort or 24500
+    nextWorkerPort = port + 1
+    return port
+end
+
+function spawnWorker()
     worker = {}
-    worker.port = nextWorkerPort or 24500
+    worker.port = getPort()
     worker.script = sim.app:createObject{
         type = 'script',
         language = 'lua',
@@ -50,6 +56,5 @@ function getPort()
     rapi_broker:log(1, 'spawning worker for client at port ' .. worker.port, worker.script)
     worker.script:init()
     workers[worker.port] = worker
-    nextWorkerPort = worker.port + 1
     return worker.port
 end

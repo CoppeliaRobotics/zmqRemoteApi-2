@@ -18,9 +18,9 @@ function sysCall_init()
 end
 
 function sysCall_thread()
-    -- handshake to get a port number:
+    -- handshake to spawn worker and get the port number:
     rapi = sim.ZMQRemoteAPI{name = '/clientTest[handshake]'}
-    local port = rapi:call('getPort', rapi.clientID)
+    local port = rapi:call(nil, 'spawnWorker', rapi.clientID)
     -- connect to port:
     rapi = sim.ZMQRemoteAPI{
         name = '/clientTest',
@@ -29,12 +29,12 @@ function sysCall_thread()
     }
 
     --rapi:log(0, 'calling "test"...')
-    --local result = rapi:call('test')
+    --local result = rapi:call(nil, 'test')
     --rapi:log(0, 'result of calling "test":', result)
 
     rapi:registerCallback('cb')
     rapi:log(0, 'calling "testWithCallback"...')
-    local result = rapi:call('testWithCallback', 'cb')
+    local result = rapi:call(nil, 'testWithCallback', 'cb')
     rapi:log(0, 'result of calling "testWithCallback":', result)
 end
 
@@ -51,18 +51,18 @@ Python example:
 ```python
 from sim.zmqremoteapi import ZMQRemoteAPI
 
-# handshake to get a port number:
+# handshake to spawn worker and get the port number:
 rapi = ZMQRemoteAPI({'name': 'handshake', 'server': False})
-port = rapi.call(None, 'getPort', rapi.client_id)
+port = rapi.call(None, 'spawnWorker', rapi.client_id)
 # connect to port:
 rapi = ZMQRemoteAPI({'name': 'client', 'server': False, 'port': port})
 
 '''
 def cb(x):
-    return rapi.call('test2') + '-CB-' + x
+    return rapi.call(None, 'test2') + '-CB-' + x
 
 rapi.register_callback('cb', cb)
-result = rapi.call('testWithCallback', 'cb')
+result = rapi.call(None, 'testWithCallback', 'cb')
 print(result)
 '''
 

@@ -1,7 +1,7 @@
 import sim
 from sim.zmqremoteapi import ZMQRemoteAPI
 
-port = ZMQRemoteAPI().call(None, 'getPort')
+port = ZMQRemoteAPI().call(None, 'spawnWorker')
 rapi = ZMQRemoteAPI({'port': port})
 sim.Object._callMethod = rapi.call
 
