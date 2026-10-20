@@ -230,7 +230,8 @@ class ZMQRemoteAPI:
                 # Store a wrapper that calls back to the remote side.
                 self.callables[func_name] = lambda *args: self.call(None, func_name, *args)
                 if req['sysCall']:
-                    globals()[func_name] = self.callables[func_name]
+                    #globals()[func_name] = self.callables[func_name]
+                    raise Exception('not supported')
                 error = False
                 result = True
             except Exception as e:
