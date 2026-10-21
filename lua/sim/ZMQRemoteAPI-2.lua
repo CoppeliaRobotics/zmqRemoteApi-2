@@ -59,6 +59,7 @@ function ZMQRemoteAPI:initialize(opts)
     self.lastRecvTime = 0
     self.keepAliveInterval = 5
     self.time = function() return sim.app.systemTime end
+    self.print = print
 
     local ctx = simZMQ.ctx_singleton()
     local host = opts.host or '127.0.0.1'
@@ -93,7 +94,7 @@ function ZMQRemoteAPI:log(level, ...)
     if level <= self.verbose then
         local id = 'ZMQRemoteAPI'
         if self.name then id = id .. '[' .. self.name .. ']' end
-        print(id, ...)
+        self.print(id, ...)
     end
 end
 

@@ -62,6 +62,7 @@ class ZMQRemoteAPI:
         self.keepAliveInterval = 5
         import time
         self.time = time.time
+        self.print = print
 
         self._context = zmq.Context()
         # Both sides use DEALER to allow asynchronous bidirectional communication.
@@ -96,7 +97,7 @@ class ZMQRemoteAPI:
             tag = 'ZMQRemoteAPI'
             if self.name:
                 tag += f'[{self.name}]'
-            print(tag, *args)
+            self.print(tag, *args)
 
     # XXX: This method must be overridden if object‑oriented calls with `target` are needed.
     def callMethod(self, target: int, method_name: str, *args: Any) -> Any:
