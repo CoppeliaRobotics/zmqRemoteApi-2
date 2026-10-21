@@ -227,7 +227,7 @@ function ZMQRemoteAPI:handleRequest(req)
             end
             if req.sysCall then
                 --_G[req.func] = self._callables[req.func]
-                sim.self:registerFunctionHook(req.func, self._callables[req.func], false)
+                sim.self:registerFunctionHook(req.func, self._callables[req.func], {when = 'after'})
             end
             return true
         end)
