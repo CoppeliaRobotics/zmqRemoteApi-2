@@ -328,12 +328,11 @@ class ZMQRemoteAPI:
             self.log(2, 'receiving... (block)')
             data = self._socket.recv()
         else:
-            self.log(2, 'receiving... (non‑block)')
             try:
                 data = self._socket.recv(flags=zmq.NOBLOCK)
-                self.log(2, f'received {len(data)} bytes')
             except zmq.Again:
                 return None
+        self.log(2, f'received {len(data)} bytes')
         try:
             msg = cbor2.loads(data, tag_hook=self._tag_hook)
         except Exception as e:
