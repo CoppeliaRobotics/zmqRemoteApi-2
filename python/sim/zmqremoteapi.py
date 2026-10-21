@@ -94,10 +94,12 @@ class ZMQRemoteAPI:
 
     def log(self, level: int, *args: Any) -> None:
         if level <= self.verbose:
-            tag = 'ZMQRemoteAPI'
+            msg = 'ZMQRemoteAPI'
             if self.name:
-                tag += f'[{self.name}]'
-            self.print(tag, *args)
+                msg += f'[{self.name}]'
+            for arg in args:
+                msg += f' {arg!s}'
+            self.print(msg)
 
     # XXX: This method must be overridden if object‑oriented calls with `target` are needed.
     def callMethod(self, target: int, method_name: str, *args: Any) -> Any:

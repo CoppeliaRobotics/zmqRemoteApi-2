@@ -92,9 +92,13 @@ end
 
 function ZMQRemoteAPI:log(level, ...)
     if level <= self.verbose then
-        local id = 'ZMQRemoteAPI'
-        if self.name then id = id .. '[' .. self.name .. ']' end
-        self.print(id, ...)
+        local msg = 'ZMQRemoteAPI'
+        if self.name then msg = msg .. '[' .. self.name .. ']' end
+        local args = table.pack(...)
+        for i = 1, args.n do
+            msg = msg .. ' ' .. string.anytostring(args[i], {omitQuotes = true})
+        end
+        self.print(msg)
     end
 end
 
