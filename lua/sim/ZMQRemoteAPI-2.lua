@@ -207,7 +207,7 @@ function ZMQRemoteAPI:handleRequest(req)
     local req_id = req.id
 
     if msg == 'call' then
-        local ok, result = pcall(function()
+        local ok, result = xpcall(function()
             assert(type(req.func) == 'string', 'invalid function name')
             local args = req.args or {}
             assert(type(args) == 'table', 'invalid args type')
@@ -221,7 +221,7 @@ function ZMQRemoteAPI:handleRequest(req)
                 assert(type(func) == 'function', 'not a function: ' .. req.func)
                 return table.pack(func(table.unpack(args)))
             end
-        end)
+        end, debug.traceback)
         self:send{ msg = 'result', id = req_id, error = not ok, result = result }
     elseif msg == 'registerCallback' then
         local ok, result = pcall(function()

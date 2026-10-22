@@ -220,7 +220,10 @@ class ZMQRemoteAPI:
                     result = (result,)
                 error = False
             except Exception as e:
-                result = str(e)
+                import traceback
+                result = ''.join(traceback.format_exception_only(type(e), e)).rstrip()
+                for f in traceback.extract_tb(e.__traceback__):
+                    result += f'\n{f.filename}:{f.lineno}: {f.name}: {f.line}'
                 error = True
 
             self.send({'msg': 'result', 'id': req_id, 'error': error, 'result': result})
