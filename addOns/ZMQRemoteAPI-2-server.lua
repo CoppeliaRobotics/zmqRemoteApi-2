@@ -37,7 +37,9 @@ end
 function sysCall_cleanup()
     for client_id, worker in pairs(workers) do
         rapi_broker:log(2, 'removing worker script', client_id, worker.script)
-        worker.script:remove()
+        if worker.script:isValid() then
+            worker.script:remove()
+        end
     end
     workers = {}
     rapi_broker:cleanup()
