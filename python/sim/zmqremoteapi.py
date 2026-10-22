@@ -348,8 +348,8 @@ class ZMQRemoteAPI:
         This is identical to the original ZMQRemoteAPI.
         """
 
-        if tag.tag == Matrix.CBOR_TAG:
-            return Matrix.fromcbor(tag)
+        if tag.tag == sim.Matrix.CBOR_TAG:
+            return sim.Matrix.fromcbor(tag)
         if tag.tag in range(64, 88):
             _TAG_TO_DTYPE = {
                 64: np.dtype("u1"),        # U8
