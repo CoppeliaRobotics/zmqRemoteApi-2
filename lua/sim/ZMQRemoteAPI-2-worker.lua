@@ -8,7 +8,7 @@ function sysCall_init()
         name = 'worker-' .. WORKER_PORT,
         port = WORKER_PORT,
         server = true,
-        verbose = 2,
+        verbose = sim.app.customData['zmqRemoteApi2.verbose'] or 0,
     }
     rapi.callMethod = sim.callMethod
     rapi:log(1, 'spawned worker script (handle=' .. sim.self.handle ..')')
