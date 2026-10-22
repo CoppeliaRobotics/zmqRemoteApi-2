@@ -312,7 +312,7 @@ class ZMQRemoteAPI:
         if not self._socket:
             raise RuntimeError('Socket not available')
         self.log(2, 'sending:', msg)
-        data = cbor2.dumps(msg, default=self._encode_default)
+        data = cbor2.dumps(msg, encoders=self._encoders(), default=self._encode_default)
         self._socket.send(data, flags=0 if block else zmq.DONTWAIT)
         self.lastSendTime = self.time()
         self.log(2, 'sent')
@@ -345,27 +345,14 @@ class ZMQRemoteAPI:
         self.lastRecvTime = self.time()
         return msg
 
-    def _tag_hook(self, *args) -> Any:
+    def _tag_hook(self, tag: cbor2.CBORTag, immutable: bool) -> Any:
         """
         CBOR tag hook for decoding special types (numpy arrays, sim objects, etc.)
         This is identical to the original ZMQRemoteAPI.
         """
 
-        # XXX: arguments changed between version 5.x and version 6x!
-        # we only need the CBORTag here.
-        tag: cbor2.CBORTag | None = None
-        for arg in args:
-            if isinstance(arg, cbor2.CBORTag):
-                tag = arg
-                break
-        if tag is None:
-            raise Exception('unsupported cbor2 version')
-
-        if tag.tag == 40:
-            # ND-array
-            dims, data = tag.value
-            arr = np.array(data, dtype=np.float64)
-            return arr.reshape(dims)
+        if tag.tag == Matrix.CBOR_TAG:
+            return Matrix.fromcbor(tag)
         if tag.tag in range(64, 88):
             _TAG_TO_DTYPE = {
                 64: np.dtype("u1"),        # U8
@@ -401,25 +388,30 @@ class ZMQRemoteAPI:
                     # rare fallback: list of ints
                     payload = bytes(payload)
                 return np.frombuffer(payload, dtype=dtype)
-        if tag.tag == 4294999999:
-            handle = tag.value
-            return sim.Object(handle)
-        if tag.tag == 4294999998:
-            # handlearray -> ObjectArray
-            raise NotImplementedError("handlearray decoding not implemented")
-        if tag.tag == 4294970000:
-            # color
-            return tuple(tag.value)
-        if tag.tag == 4294980000:
-            # quaternion
-            return np.array(tag.value, dtype=np.float64)
-        if tag.tag == 4294980500:
-            # pose
-            return np.array(tag.value, dtype=np.float64)
+        if tag.tag == sim.Object.CBOR_TAG:
+            return sim.Object.fromcbor(tag)
+        if tag.tag == sim.ObjectArray.CBOR_TAG:
+            return sim.ObjectArray.fromcbor(tag)
+        if tag.tag == sim.Color.CBOR_TAG:
+            return sim.Color.fromcbor(tag)
+        if tag.tag == sim.Quaternion.CBOR_TAG:
+            return sim.Quaternion.fromcbor(tag)
+        if tag.tag == sim.Pose.CBOR_TAG:
+            return sim.Pose.fromcbor(tag)
         if tag.tag == 4294999997:
             # zmq remote callback
             return lambda *args: self.call(None, tag.value, *args)
         return tag
+
+    def _encoders(self):
+        return {
+            sim.Object: lambda e, v: e.encode(v.__cbor__()),
+            sim.ObjectArray: lambda e, v: e.encode(v.__cbor__()),
+            sim.Color: lambda e, v: e.encode(v.__cbor__()),
+            sim.Matrix: lambda e, v: e.encode(v.__cbor__()),
+            sim.Quaternion: lambda e, v: e.encode(v.__cbor__()),
+            sim.Pose: lambda e, v: e.encode(v.__cbor__()),
+        }
 
     def _encode_default(self, encoder: cbor2.CBOREncoder, value: Any) -> None:
         if callable(value):
