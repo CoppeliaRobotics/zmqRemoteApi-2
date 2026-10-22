@@ -1,3 +1,8 @@
+import argparse
+argparser = argparse.ArgumentParser()
+argparser.add_argument("-v", "--verbose", type=int, default=0, metavar="N", help="verbosity level (default: 0)")
+args = argparser.parse_args()
+
 try:
     import sim
     from sim.zmqremoteapi import ZMQRemoteAPI
@@ -5,10 +10,9 @@ except ModuleNotFoundError:
     raise SystemExit('CoppeliaSim libraries not found. Make sure those can be found via Python\'s path, e.g.: PYTHONPATH=/path/to/coppeliaSim/python python3 example.py')
 
 # handshake to get a port number:
-rapi = ZMQRemoteAPI({'name': 'handshake', 'server': False})
-port = rapi.call(None, 'spawnWorker')
+port = ZMQRemoteAPI().call(None, 'spawnWorker')
 # connect to port:
-rapi = ZMQRemoteAPI({'name': 'client', 'server': False, 'port': port})
+rapi = ZMQRemoteAPI(name = 'client', server = False, port = port, verbose = args.verbose)
 
 '''
 def cb(x):

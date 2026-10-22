@@ -1,12 +1,16 @@
+import argparse
+argparser = argparse.ArgumentParser()
+argparser.add_argument("-v", "--verbose", type=int, default=0, metavar="N", help="verbosity level (default: 0)")
+args = argparser.parse_args()
+
 import sim
 from sim.zmqremoteapi import ZMQRemoteAPI
 from time import time
 
-rapi = ZMQRemoteAPI({'name': 'client-handshake', 'server': False, 'verbose': 0})
-port = rapi.call(None, 'spawnWorker')
+port = ZMQRemoteAPI().call(None, 'spawnWorker')
 print('port:', port)
 
-rapi = ZMQRemoteAPI({'name': 'client', 'server': False, 'port': port, 'verbose': 0})
+rapi = ZMQRemoteAPI(name = 'client', server = False, port = port, verbose = args.verbose)
 
 sim.Object._callMethod = rapi.call
 

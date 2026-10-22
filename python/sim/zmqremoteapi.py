@@ -52,11 +52,10 @@ import sim
 
 
 class ZMQRemoteAPI:
-    def __init__(self, opts: Optional[Dict[str, Any]] = None):
-        opts = opts or {}
-        self.name = opts.get('name')
-        self.server = bool(opts.get('server', False))
-        self.verbose = opts.get('verbose', 0)
+    def __init__(self, *, host: str = '127.0.0.1', port: int = 24020, name: str | None = None, server: bool = False, verbose: int = 0, **kwargs):
+        self.name = name
+        self.server = server
+        self.verbose = verbose
         self.lastSendTime = 0
         self.lastRecvTime = 0
         self.keepAliveInterval = 5
@@ -68,8 +67,6 @@ class ZMQRemoteAPI:
         # Both sides use DEALER to allow asynchronous bidirectional communication.
         self._socket = self._context.socket(zmq.DEALER)
 
-        host = opts.get('host', '127.0.0.1')
-        port = opts.get('port', 24020)
         if self.server:
             self._socket.bind(f'tcp://*:{port}')
         else:
@@ -431,12 +428,12 @@ class ZMQRemoteAPI:
 
 class PythonWrapper:
     def __init__(self, *, port: int, client_id: str, sysCalls: list[str], verbose: int = 0, barePrint: bool = False, **kwargs):
-        self.rapi = ZMQRemoteAPI({
-            'name': f'pythonWrapper-pyClient-{client_id}',
-            'server': False,
-            'port': port,
-            'verbose': verbose,
-        })
+        self.rapi = ZMQRemoteAPI(
+            name = f'pythonWrapper-pyClient-{client_id}',
+            server = False,
+            port = port,
+            verbose = verbose,
+        )
         if barePrint is False:
             self.rapi.print = lambda *args: self.rapi.call(None, '__print', *map(str, args))
 
