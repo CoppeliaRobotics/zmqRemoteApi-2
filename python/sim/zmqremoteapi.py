@@ -345,11 +345,22 @@ class ZMQRemoteAPI:
         self.lastRecvTime = self.time()
         return msg
 
-    def _tag_hook(self, decoder: cbor2.CBORDecoder, tag: cbor2.CBORTag) -> Any:
+    def _tag_hook(self, *args) -> Any:
         """
         CBOR tag hook for decoding special types (numpy arrays, sim objects, etc.)
         This is identical to the original ZMQRemoteAPI.
         """
+
+        # XXX: arguments changed between version 5.x and version 6x!
+        # we only need the CBORTag here.
+        tag: cbor2.CBORTag | None = None
+        for arg in args:
+            if isinstance(arg, cbor2.CBORTag):
+                tag = arg
+                break
+        if tag is None:
+            raise Exception('unsupported cbor2 version')
+
         if tag.tag == 40:
             # ND-array
             dims, data = tag.value
