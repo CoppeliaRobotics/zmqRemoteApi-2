@@ -17,6 +17,7 @@ function sysCall_init()
         server = true,
         verbose = sim.app.customData['zmqRemoteApi2.verbose'] or 0,
     }
+    rapi_broker.keepAliveInterval = 0 -- broker doesn't need keep-alive
     rapi_broker:registerCallback('getPort', getPort)
     rapi_broker:registerCallback('spawnWorker', spawnWorker)
     rapi_broker:log(1, 'server started')
@@ -35,6 +36,7 @@ end
 
 function sysCall_cleanup()
     for client_id, worker in pairs(workers) do
+        rapi_broker:log(2, 'removing worker script', client_id, worker.script)
         worker.script:remove()
     end
     workers = {}
