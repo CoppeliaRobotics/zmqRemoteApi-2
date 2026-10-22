@@ -18,6 +18,7 @@ function sysCall_init()
         verbose = sim.app.customData['zmqRemoteApi2.verbose'] or 0,
     }
     rapi_broker:registerCallback('getPort', getPort)
+    rapi_broker:registerCallback('spawnWorker', spawnWorker)
     rapi_broker:log(1, 'server started')
 end
 
