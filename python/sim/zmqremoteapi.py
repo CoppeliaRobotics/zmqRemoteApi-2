@@ -435,3 +435,33 @@ class ZMQRemoteAPI:
             encoder.encode(cbor2.CBORTag(4294999997, name))
         else:
             raise cbor2.CBOREncodeTypeError(f'cannot serialize type {type(value)}')
+
+
+class PythonWrapper:
+    def __init__(self, *, port: int, client_id: str, sysCalls: list[str], verbose: int = 0, barePrint: bool = False, **kwargs):
+        self.rapi = ZMQRemoteAPI({
+            'name': f'pythonWrapper-pyClient-{client_id}',
+            'server': False,
+            'port': port,
+            'verbose': verbose,
+        })
+        if barePrint is False:
+            self.rapi.print = lambda *args: self.rapi.call(None, '__print', *map(str, args))
+
+        self.sysCalls = sysCalls
+        sim.Object._callMethod = self.rapi.call
+        self.rapi.log(1, 'initializing...')
+
+    def registerSysCalls(self, globalsDict: dict[str, Any]):
+        self.rapi.log(1, 'registering sysCalls...')
+        for name in self.sysCalls:
+            if callable(func := globalsDict.get(name)):
+                self.rapi.log(2, f'registering sysCall {name}...')
+                self.rapi.registerCallback(name, func, False)
+
+    def spin(self):
+        self.rapi.log(1, 'ready')
+        self.rapi.call(None, '__ready')
+        self.rapi.log(1, 'spinning')
+        while 1:
+            self.rapi.spinSome()
