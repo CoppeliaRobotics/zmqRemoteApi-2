@@ -452,9 +452,20 @@ class PythonWrapper:
                 self.rapi.log(2, f'registering sysCall {name}...')
                 self.rapi.registerCallback(name, func, False)
 
-    def spin(self):
+    def ready(self):
         self.rapi.log(1, 'ready')
         self.rapi.call(None, '__ready')
+
+    async def spinAsync(self):
+        import asyncio
+        self.ready()
+        self.rapi.log(1, 'spinning')
+        while 1:
+            self.rapi.spinSome()
+            await asyncio.sleep(0)
+
+    def spin(self):
+        self.ready()
         self.rapi.log(1, 'spinning')
         while 1:
             self.rapi.spinSome()
