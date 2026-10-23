@@ -222,8 +222,9 @@ class ZMQRemoteAPI:
             except Exception as e:
                 import traceback
                 result = ''.join(traceback.format_exception_only(type(e), e)).rstrip()
+                result += '\nTraceback (most recent call last):'
                 for f in traceback.extract_tb(e.__traceback__):
-                    result += f'\n{f.filename}:{f.lineno}: {f.name}: {f.line}'
+                    result += f'\n  File "{f.filename}", line {f.lineno}, in {f.name}\n    {f.line}'
                 error = True
 
             self.send({'msg': 'result', 'id': req_id, 'error': error, 'result': result})
