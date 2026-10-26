@@ -469,3 +469,97 @@ class PythonWrapper:
         self.rapi.log(1, 'spinning')
         while 1:
             self.rapi.spinSome()
+
+    def registerCmdInterface(self):
+        self.rapi.log(1, 'registering cmd intefrace...')
+        self.rapi.registerCallback('evalExec', self.evalExec, False)
+        self.rapi.registerCallback('evalExecRet', self.evalExecRet, False)
+        self.rapi.registerCallback('getCompletion', self.getCompletion, False)
+        self.rapi.registerCallback('getCalltip', self.getCalltip, False)
+
+    def evalExec(self, theStr):
+        try:
+            ret = eval(theStr, globals())
+            if ret is not None:
+                self.rapi.print(repr(ret))
+        except SyntaxError:
+            exec(theStr, globals())
+
+    def evalExecRet(self, theStr):
+        try:
+            ret = eval(theStr,globals())
+            return ret
+        except SyntaxError:
+            exec(theStr,globals())
+
+    def getCompletion(self, input, pos):
+        import functools, re
+        ret = []
+        if pos == len(input):
+            if m := re.search(r'[_\w][_\w\.]*$', input):
+                *parts, last = m.group().split('.')
+                obj = functools.reduce(lambda o, k: None if o is None else globals().get(k) if o == globals() else getattr(o, k, None), parts, globals())
+                for k in ([] if obj is None else globals() if obj == globals() else dir(obj)):
+                    if k.startswith(last) and len(k) > len(last):
+                        ret.append(k[len(last):])
+        return ret
+
+    def getCalltip(self, input, pos, scriptHandle):
+        def getCallContexts(code, pos):
+            from io import BytesIO
+            from tokenize import tokenize, TokenInfo, TokenError
+            import tokenize as T
+
+            def lpos(code, row, col):
+                if row > 1:
+                    i = code.index('\n')
+                    return i + 1 + lpos(code[i+1:], row-1, col)
+                else:
+                    return col
+
+            tokens = []
+            try:
+                for t in tokenize(BytesIO(code.encode('utf-8')).readline):
+                    tokens.append(t)
+            except TokenError:
+                pass
+
+            def merge_namedotname(tokens):
+                for i, (t1, t2, t3) in enumerate(zip(tokens, tokens[1:], tokens[2:])):
+                    if t1.type == T.NAME and t2.type == T.OP and t2.string == '.' and t3.type == T.NAME:
+                        merged = TokenInfo(T.NAME, t1.string + '.' + t3.string, t1.start, t3.end, t1.line + t2.line + t3.line)
+                        return merge_namedotname(tokens[:i] + [merged] + tokens[i+3:])
+                return tokens
+            tokens = merge_namedotname(tokens)
+
+            tokens = list(filter(lambda t: t.type == T.NAME or (t.type == T.OP and t.string in '()'), tokens))
+
+            ranges = {}
+            stack = []
+            last_name = None
+            for t in tokens:
+                if t.string == '(':
+                    stack.append(last_name)
+                elif t.string == ')':
+                    if not stack: return []
+                    tstart = stack.pop()
+                    ranges[tstart.string] = (lpos(code, *tstart.start), lpos(code, *t.end))
+                else:
+                    last_name = t
+            # flush stack:
+            end = len(code)
+            while stack:
+                tstart = stack.pop()
+                ranges[tstart.string] = (lpos(code, *tstart.start), end)
+
+            ret = []
+            for name, (start, end) in ranges.items():
+                if start <= pos <= end:
+                    ret.append(name)
+            return ret
+
+        cc = getCallContexts(input, pos)
+        if cc:
+            return 'not implemented'  #sim.getApiInfo(-1, cc[0])
+        else:
+            return ''
