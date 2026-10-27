@@ -597,7 +597,7 @@ class PythonWrapper:
         try:
             ret = eval(theStr, self._env)
             if ret is not None:
-                self.rapi.print(repr(ret))
+                self.rapi.print(ret)
         except SyntaxError:
             exec(theStr, self._env)
 
