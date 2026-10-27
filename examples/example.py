@@ -27,6 +27,8 @@ sim.Object._callMethod = rapi.call
 
 print('sim.self.handle:', sim.self.handle)
 print('sim.scene:', sim.scene)
+print('sim.scene.selection:', sim.scene.selection)
+print('len(sim.scene.selection):', len(sim.scene.selection))
 print('calling sim.scene.getObject("Floor")...')
 Floor = sim.scene.getObject('Floor')
 print('sim.scene.getObject("Floor"):', Floor)
