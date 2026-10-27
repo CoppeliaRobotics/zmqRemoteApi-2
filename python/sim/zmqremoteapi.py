@@ -431,7 +431,8 @@ class ZMQRemoteAPI:
 
 
 class PythonWrapper:
-    def __init__(self, *, port: int, client_id: str, sysCalls: list[str], verbose: int = 0, barePrint: bool = False, **kwargs):
+    def __init__(self, _globals: dict[str, Any], *, port: int, client_id: str, sysCalls: list[str], verbose: int = 0, barePrint: bool = False, **kwargs):
+        self._g = _globals
         self.rapi = ZMQRemoteAPI(
             name = f'pythonWrapper-pyClient-{client_id}',
             server = False,
@@ -445,10 +446,10 @@ class PythonWrapper:
         sim.Object._callMethod = self.rapi.call
         self.rapi.log(1, 'initializing...')
 
-    def registerSysCalls(self, globalsDict: dict[str, Any]):
+    def registerSysCalls(self):
         self.rapi.log(1, 'registering sysCalls...')
         for name in self.sysCalls:
-            if callable(func := globalsDict.get(name)):
+            if callable(func := self._g.get(name)):
                 self.rapi.log(2, f'registering sysCall {name}...')
                 self.rapi.registerCallback(name, func, False)
 
@@ -479,18 +480,18 @@ class PythonWrapper:
 
     def evalExec(self, theStr):
         try:
-            ret = eval(theStr, globals())
+            ret = eval(theStr, self._g)
             if ret is not None:
                 self.rapi.print(repr(ret))
         except SyntaxError:
-            exec(theStr, globals())
+            exec(theStr, self._g)
 
     def evalExecRet(self, theStr):
         try:
-            ret = eval(theStr,globals())
+            ret = eval(theStr, self._g)
             return ret
         except SyntaxError:
-            exec(theStr,globals())
+            exec(theStr, self._g)
 
     def getCompletion(self, input, pos):
         import functools, re
@@ -498,8 +499,8 @@ class PythonWrapper:
         if pos == len(input):
             if m := re.search(r'[_\w][_\w\.]*$', input):
                 *parts, last = m.group().split('.')
-                obj = functools.reduce(lambda o, k: None if o is None else globals().get(k) if o == globals() else getattr(o, k, None), parts, globals())
-                for k in ([] if obj is None else globals() if obj == globals() else dir(obj)):
+                obj = functools.reduce(lambda o, k: None if o is None else self._g.get(k) if o == self._g else getattr(o, k, None), parts, self._g)
+                for k in ([] if obj is None else self._g if obj == self._g else dir(obj)):
                     if k.startswith(last) and len(k) > len(last):
                         ret.append(k[len(last):])
         return ret
