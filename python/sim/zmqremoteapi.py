@@ -431,9 +431,123 @@ class ZMQRemoteAPI:
             raise cbor2.CBOREncodeTypeError(f'cannot serialize type {type(value)}')
 
 
+class Env(dict):
+    """A dict suitable as globals() for eval()/exec(), layering:
+
+        virtuals  ->  locally-set names  ->  fallback (e.g. caller's globals())
+
+    Reads hit the first layer that has the name.  Writes go to the virtual
+    setter if the name is virtual, otherwise into this dict (shadowing the
+    fallback).  The fallback is held by reference and never mutated; `del`
+    / `pop` only affect locally-set names.
+    """
+
+    def __init__(self, fallback=None, virtuals=None, initial=None):
+        super().__init__()
+        self._fallback = fallback if fallback is not None else {}
+        self._virtuals = dict(virtuals or {})          # name -> (getter, setter)
+        if initial:
+            super().update(initial)
+        for name in self._virtuals:                    # virtuals are never stored
+            super().pop(name, None)
+
+    def _is_virtual(self, key):
+        return key in self._virtuals
+
+    # ---- read paths -----------------------------------------------------
+    def __getitem__(self, key):
+        if self._is_virtual(key):
+            return self._virtuals[key][0]()
+        try:
+            return super().__getitem__(key)
+        except KeyError:
+            return self._fallback[key]                 # may KeyError -> NameError
+
+    def __contains__(self, key):
+        return (self._is_virtual(key)
+                or super().__contains__(key)
+                or key in self._fallback)
+
+    def get(self, key, default=None):
+        if self._is_virtual(key):
+            return self._virtuals[key][0]()
+        if super().__contains__(key):
+            return super().__getitem__(key)
+        try:
+            return self._fallback[key]
+        except KeyError:
+            return default
+
+    def setdefault(self, key, default=None):
+        if self._is_virtual(key):
+            return self._virtuals[key][0]()
+        if super().__contains__(key):
+            return super().__getitem__(key)
+        try:
+            return self._fallback[key]
+        except KeyError:
+            pass
+        super().__setitem__(key, default)
+        return default
+
+    # ---- write paths ----------------------------------------------------
+    def __setitem__(self, key, value):
+        if self._is_virtual(key):
+            self._virtuals[key][1](value)
+            return
+        super().__setitem__(key, value)
+
+    def update(self, *args, **kwargs):
+        for k, v in dict(*args, **kwargs).items():
+            self[k] = v
+
+    def __delitem__(self, key):
+        if self._is_virtual(key):
+            raise KeyError(key)
+        super().__delitem__(key)                       # only locally-set names
+
+    def pop(self, key, *args):
+        if self._is_virtual(key):
+            if args:
+                return args[0]
+            raise KeyError(key)
+        if super().__contains__(key):
+            return super().pop(key)
+        if args:
+            return args[0]
+        raise KeyError(key)
+
+    def flush(self):
+        """STORE_GLOBAL calls PyDict_SetItem directly, so a virtual name
+        written from inside a function lands in the real dict.  Route any
+        such leaked value to the setter and remove the raw entry."""
+        for name, (_, setter) in self._virtuals.items():
+            if super().__contains__(name):
+                setter(super().pop(name))
+
+
 class PythonWrapper:
     def __init__(self, _globals: dict[str, Any], *, port: int, client_id: str, sysCalls: list[str], verbose: int = 0, barePrint: bool = False, **kwargs):
         self._g = _globals
+        import sim
+        self._env = Env(_globals, {
+            'cur': (
+                lambda: sim.app.current,
+                lambda v: setattr(sim.app, 'current', v),
+            ),
+            'sel': (
+                lambda: sim.scene.selection,
+                lambda v: setattr(sim.scene, 'selection', v),
+            ),
+            'sel1': (
+                lambda: sim.scene.selection[-1] if len(sim.scene.selection) > 0 else None,
+                lambda v: setattr(sim.scene, 'selection', [v]),
+            ),
+            'h': (
+                lambda: sim.scene.getObject,
+                lambda v: None,
+            ),
+        })
         self.rapi = ZMQRemoteAPI(
             name = f'pythonWrapper-pyClient-{client_id}',
             server = False,
@@ -479,28 +593,20 @@ class PythonWrapper:
         self.rapi.registerCallback('__pythonWrapper_getCompletion', self.getCompletion, False)
         self.rapi.registerCallback('__pythonWrapper_getCalltip', self.getCalltip, False)
 
-    def cmdEnv(self):
-        import sim
-        self._g['cur'] = sim.app.current
-        self._g['sel'] = sim.scene.selection
-        self._g['sel1'] = sim.scene.selection[-1] if len(sim.scene.selection) > 0 else None
-        self._g['h'] = sim.scene.getObject
-        return self._g
-
     def evalExec(self, theStr):
         try:
-            ret = eval(theStr, self.cmdEnv())
+            ret = eval(theStr, self._env)
             if ret is not None:
                 self.rapi.print(repr(ret))
         except SyntaxError:
-            exec(theStr, self.cmdEnv())
+            exec(theStr, self._env)
 
     def evalExecRet(self, theStr):
         try:
-            ret = eval(theStr, self.cmdEnv())
+            ret = eval(theStr, self._env)
             return ret
         except SyntaxError:
-            exec(theStr, self.cmdEnv())
+            exec(theStr, self._env)
 
     def getCompletion(self, input, pos):
         import functools, re
