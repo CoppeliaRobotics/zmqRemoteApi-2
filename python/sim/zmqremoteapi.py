@@ -314,6 +314,7 @@ class ZMQRemoteAPI:
             raise RuntimeError('Socket not available')
         self.log(2, 'sending:', msg)
         data = cbor2.dumps(msg, encoders=self._encoders(), default=self._encode_default)
+        self.log(3, f'CBOR payload: {data.hex(' ')}')
         self._socket.send(data, flags=0 if block else zmq.DONTWAIT)
         self.lastSendTime = self.time()
         self.log(2, 'sent')
@@ -336,11 +337,11 @@ class ZMQRemoteAPI:
             except zmq.Again:
                 return None
         self.log(2, f'received {len(data)} bytes')
+        self.log(3, f'CBOR payload: {data.hex(' ')}')
         try:
             msg = cbor2.loads(data, tag_hook=self._tag_hook)
         except Exception as e:
             self.log(1, f'invalid CBOR data: {e!s}')
-            self.log(3, f'CBOR payload: {data.hex(' ')}')
             return None
         self.log(2, 'received:', msg)
         self.lastRecvTime = self.time()
