@@ -46,6 +46,7 @@ local class = require 'middleclass'
 local sim = require 'sim-2'
 local simCBOR = require 'simCBOR'
 local simZMQ = require 'simZMQ'
+local array = require 'array'
 simZMQ.__raiseErrors()
 
 local ZMQRemoteAPI = class 'sim.ZMQRemoteAPI'
@@ -161,7 +162,7 @@ end
 --]]
 function ZMQRemoteAPI:call(target, funcName, ...)
     assert(type(funcName) == 'string', 'invalid function name type')
-    local args = table.pack(...)
+    local args = array:pack(...)
     local req = { msg = 'call', target = target, func = funcName, args = args }
     return self:_sendRequestAndWait(req)
 end
@@ -214,12 +215,12 @@ function ZMQRemoteAPI:handleRequest(req)
 
             if req.target then
                 -- Object‑oriented call – must be implemented by a subclass.
-                return table.pack(self.callMethod(req.target, req.func, table.unpack(args)))
+                return array:pack(self.callMethod(req.target, req.func, table.unpack(args)))
             else
                 local func = self._callables[req.func]
                 assert(func, 'no such function: ' .. req.func)
                 assert(type(func) == 'function', 'not a function: ' .. req.func)
-                return table.pack(func(table.unpack(args)))
+                return array:pack(func(table.unpack(args)))
             end
         end, debug.traceback)
         self:send{ msg = 'result', id = req_id, error = not ok, result = result }
@@ -234,7 +235,7 @@ function ZMQRemoteAPI:handleRequest(req)
                 --_G[req.func] = self._callables[req.func]
                 sim.self:registerFunctionHook(req.func, self._callables[req.func], {when = 'after'})
             end
-            return true
+            return {true} -- result must be packed into an array!
         end)
         self:send{ msg = 'result', id = req_id, error = not ok, result = result }
     elseif msg == 'result' then
@@ -320,29 +321,6 @@ function ZMQRemoteAPI:send(msg, block)
     assert(self.socket)
     assert(type(msg) == 'table', 'bad type')
     self:log(2, 'sending:', msg)
-
-    -- XXX: fix packed tables by replacing nils with simCBOR.null
-    local nfixed = 0
-    for _, key in ipairs{'args', 'result'} do
-        local tbl = msg[key]
-        if type(tbl) == 'table' and math.type(tbl.n) == 'integer' then
-            self:log(2, '    key "' .. key .. '" contains a packed table')
-            local newtbl = {}
-            for i = 1, tbl.n do
-                if tbl[i] == nil then
-                    newtbl[i] = simCBOR.null
-                    self:log(2, '    fixed nil element ' .. i .. ' of packed table')
-                else
-                    newtbl[i] = tbl[i]
-                end
-            end
-            nfixed = nfixed + 1
-            msg[key] = newtbl
-        end
-    end
-    if nfixed > 0 then
-        self:log(2, 'sending (fixed ' .. nfixed .. ' keys):', msg)
-    end
     local encodeMap = {
         ['function'] = function(f)
             local name = '@tmpcallback_' .. string.functostring(f)

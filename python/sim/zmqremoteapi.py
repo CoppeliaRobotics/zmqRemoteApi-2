@@ -26,7 +26,7 @@ Message protocol:
                  { 'msg': 'noop' }
 
     Responses:   { 'id': <same>, 'msg': 'result', 'error': <bool>,
-                   'result': <any> }
+                   'result': <list> }
 
 The `id` is a unique identifier (e.g.: incremental counter) that
 allows the receiver to match a response to the original request.
@@ -75,7 +75,7 @@ class ZMQRemoteAPI:
         # Store local callables (both client and server).
         self.callables: Dict[str, Callable] = {}
 
-        # Pending requests: id -> {'done': bool, 'result': Any, 'error': bool}
+        # Pending requests: id -> {'done': bool, 'result': list[Any], 'error': bool}
         self._pending: Dict[int, Dict[str, Any]] = {}
         self.__nextId = 0
 
@@ -125,13 +125,15 @@ class ZMQRemoteAPI:
             result = pending['result']
             # Unpack the result:
             if result is None:
-                return None
+                raise TypeError('protocol error: field "result" missing')
             # Convert to tuple if it's a list or tuple; otherwise keep as-is.
             if isinstance(result, (list, tuple)):
                 if len(result) == 1:
                     return result[0]
-                return tuple(result)
-            return result
+                if len(result) > 1:
+                    return tuple(result)
+                return
+            raise TypeError('protocol error: field "result" must be a list')
 
     def _sendKeepAlive(self):
         """
