@@ -479,20 +479,28 @@ class PythonWrapper:
         self.rapi.registerCallback('__pythonWrapper_getCompletion', self.getCompletion, False)
         self.rapi.registerCallback('__pythonWrapper_getCalltip', self.getCalltip, False)
 
+    def cmdEnv(self):
+        import sim
+        self._g['cur'] = sim.app.current
+        self._g['sel'] = sim.scene.selection
+        self._g['sel1'] = sim.scene.selection[-1] if len(sim.scene.selection) > 0 else None
+        self._g['h'] = sim.scene.getObject
+        return self._g
+
     def evalExec(self, theStr):
         try:
-            ret = eval(theStr, self._g)
+            ret = eval(theStr, self.cmdEnv())
             if ret is not None:
                 self.rapi.print(repr(ret))
         except SyntaxError:
-            exec(theStr, self._g)
+            exec(theStr, self.cmdEnv())
 
     def evalExecRet(self, theStr):
         try:
-            ret = eval(theStr, self._g)
+            ret = eval(theStr, self.cmdEnv())
             return ret
         except SyntaxError:
-            exec(theStr, self._g)
+            exec(theStr, self.cmdEnv())
 
     def getCompletion(self, input, pos):
         import functools, re
