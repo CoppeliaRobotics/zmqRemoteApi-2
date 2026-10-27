@@ -472,10 +472,10 @@ class PythonWrapper:
 
     def registerCmdInterface(self):
         self.rapi.log(1, 'registering cmd intefrace...')
-        self.rapi.registerCallback('evalExec', self.evalExec, False)
-        self.rapi.registerCallback('evalExecRet', self.evalExecRet, False)
-        self.rapi.registerCallback('getCompletion', self.getCompletion, False)
-        self.rapi.registerCallback('getCalltip', self.getCalltip, False)
+        self.rapi.registerCallback('__pythonWrapper_evalExec', self.evalExec, False)
+        self.rapi.registerCallback('__pythonWrapper_evalExecRet', self.evalExecRet, False)
+        self.rapi.registerCallback('__pythonWrapper_getCompletion', self.getCompletion, False)
+        self.rapi.registerCallback('__pythonWrapper_getCalltip', self.getCalltip, False)
 
     def evalExec(self, theStr):
         try:
