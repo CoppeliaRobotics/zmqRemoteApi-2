@@ -551,7 +551,7 @@ class PythonWrapper:
             ),
         })
         self.rapi = ZMQRemoteAPI(
-            name = f'pythonWrapper-pyClient-{client_id}',
+            name = f'pythonWrapper-py-{port}-{client_id}',
             server = False,
             port = port,
             verbose = verbose,
@@ -681,3 +681,93 @@ class PythonWrapper:
             return 'not implemented'  #sim.getApiInfo(-1, cc[0])
         else:
             return ''
+
+    def registerThread(self, thread_fn) -> PythonWrapperThreadImpl:
+        self.rapi.log(1, 'registering thread...')
+        self._thread = PythonWrapperThreadImpl(thread_fn)
+        self.rapi.registerCallback('_sysCall_thread_init', self._thread.init, False)
+        self.rapi.registerCallback('_sysCall_thread_tick', self._thread.tick, False)
+        self.rapi.registerCallback('_sysCall_thread_cleanup', self._thread.cleanup, False)
+        return self._thread
+
+
+class PythonWrapperThreadImpl:
+    def __init__(self, thread_fn):
+        self._loop          = None
+        self._step_futures  = set()  # futures awaiting the next simulation step
+        self._thread_task   = None
+        self._thread_fn     = thread_fn
+
+    # --- the yield primitive -------------------------------------------------
+    async def step(self):
+        import asyncio
+        """
+        Suspend the calling coroutine until the next `tick()` call.
+        `tick()` sets the result of every pending future, which
+        resumes the coroutine during that same tick.
+        """
+        loop = asyncio.get_running_loop()
+        fut  = loop.create_future()
+        self._step_futures.add(fut)
+        try:
+            await fut
+        finally:
+            self._step_futures.discard(fut)
+
+    # --- "spin the loop once, without blocking" ------------------------------
+    @staticmethod
+    def _run_one_iteration(loop):
+        """
+        Run exactly one iteration of the asyncio loop.
+        * call_soon(stop) queues a callback that flags the loop to exit
+            after the current iteration completes.
+        * run_forever() then processes the ready queue (all wake-ups that
+            were scheduled *before* the call) and returns immediately.
+        Because the ready queue is non-empty, the underlying selector.select(0)
+        is non-blocking.
+        """
+        if loop is None or loop.is_closed():
+            return
+        loop.call_soon(loop.stop)
+        loop.run_forever()
+
+    # --- the three executor callbacks ---------------------------------------
+    def init(self):
+        import asyncio
+        self._loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(self._loop)
+        self._thread_task = self._loop.create_task(self._thread_fn())
+        # Run up to the first `await step()` so the coroutine is "primed".
+        self._run_one_iteration(self._loop)
+
+    def tick(self):
+        # 1) Resume every coroutine that was awaiting step().
+        pending = list(self._step_futures)
+        self._step_futures.clear()
+        for fut in pending:
+            if not fut.done():
+                fut.set_result(None)
+
+        # 2) Advance the loop by one iteration (non-blocking).
+        self._run_one_iteration(self._loop)
+
+    def cleanup(self):
+        import asyncio
+        if self._loop is None or self._loop.is_closed():
+            return
+
+        for task in asyncio.all_tasks(self._loop):
+            task.cancel()
+
+        # Give cancellations one iteration to propagate (their `finally`
+        # blocks in `step()` will run).
+        self._run_one_iteration(self._loop)
+
+        _thread_task = None
+        self._loop.close()
+        asyncio.set_event_loop(None)
+
+    async def sim_sleep(self, duration):
+        end = sim.scene.simulation.time + duration
+        while sim.scene.simulation.time < end:
+            await self.step()
