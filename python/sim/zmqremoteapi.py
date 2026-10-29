@@ -529,7 +529,9 @@ class Env(dict):
 
 
 class PythonWrapper:
-    def __init__(self, _globals: dict[str, Any], *, port: int, client_id: str, sysCalls: list[str], verbose: int = 0, barePrint: bool = False, **kwargs):
+    def __init__(self, _globals: dict[str, Any], *, port: int, client_id: str, sysCalls: list[str], verbose: int = 0, barePrint: bool = False, pid: int = -1, **kwargs):
+        import psutil
+        self._server_process = psutil.Process(pid) if pid >= 0 else None
         self._g = _globals
         import sim
         self._env = Env(_globals, {
@@ -563,6 +565,19 @@ class PythonWrapper:
         sim.Object._callMethod = self.rapi.call
         self.rapi.log(1, 'initializing...')
 
+    def isServerAlive(self) -> bool:
+        import psutil
+        if self._server_process is None:
+            return False
+        try:
+            if not self._server_process.is_running():
+                return False
+            with self._server_process.oneshot():
+                return (self._server_process.status() != psutil.STATUS_ZOMBIE
+                        and self._server_process.name() == "coppeliaSim")
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            return False
+
     def registerSysCalls(self):
         self.rapi.log(1, 'registering sysCalls...')
         for name in self.sysCalls:
@@ -585,7 +600,7 @@ class PythonWrapper:
     def spin(self):
         self.ready()
         self.rapi.log(1, 'spinning')
-        while 1:
+        while self.isServerAlive():
             self.rapi.spinSome()
 
     def registerCmdInterface(self):
