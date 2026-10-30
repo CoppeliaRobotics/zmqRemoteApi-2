@@ -107,15 +107,15 @@ class ZMQRemoteAPI:
         self.__nextId += 1
         return self.__nextId
 
-    def _sendRequestAndWait(self, req: Dict[str, Any]) -> Any:
+    def _sendRequestAndWait(self, req: Dict[str, Any], *, log: bool = True) -> Any:
         """
         Helper: sends a request and waits for its response.
         """
         req_id = self._nextId()
         req['id'] = req_id
         self._pending[req_id] = {'done': False, 'result': None, 'error': False}
-        self.send(req)
-        self.spinUntilComplete(req_id)
+        self.send(req, log=log)
+        self.spinUntilComplete(req_id, log=log)
         pending = self._pending.get(req_id)
         assert pending and pending['done']
         del self._pending[req_id]
@@ -153,12 +153,15 @@ class ZMQRemoteAPI:
         return self.lastRecvTime + 2 * self.keepAliveInterval >= self.time()
 
     def call(self, target: Optional[int], func_name: str, *args: Any) -> Any:
+        return self.callEx(target, func_name, args)
+
+    def callEx(self, target: Optional[int], func_name: str, args: tuple[Any], *, log: bool = True) -> Any:
         """
         Remote procedure call. Sends a 'call' request and waits for the response.
         """
         assert isinstance(func_name, str), 'func_name must be a string'
         req = {'msg': 'call', 'target': target, 'func': func_name, 'args': args}
-        return self._sendRequestAndWait(req)
+        return self._sendRequestAndWait(req, log=log)
 
     def registerCallback(self, func_name: str, func: Callable, sysCall: bool = False) -> None:
         """
@@ -258,20 +261,20 @@ class ZMQRemoteAPI:
         else:
             self.log(1, f'unsupported message: {msg}')
 
-    def spinOnce(self):
+    def spinOnce(self, *, log: bool = True):
         """
         Processes a single incoming message if one is available.
         Returns true if a message was received and handled, otherwise False.
         """
         self._sendKeepAlive()
-        msg = self.recv(block=False)
+        msg = self.recv(block=False, log=log)
         if msg:
             self.handleRequest(msg)
             return True
         else:
             return False
 
-    def spinSome(self, timeout: float | None = None):
+    def spinSome(self, timeout: float | None = None, *, log: bool = True):
         """
         Processes incoming messages for up to 'timeout' seconds (default: indefinitely).
         Continues processing as long as messages are available, but stops early if no message
@@ -284,11 +287,11 @@ class ZMQRemoteAPI:
                 if remaining <= 0: return
                 self._sendKeepAlive()
                 if self.poll(min(remaining, 0.1)):
-                    self.spinOnce()
+                    self.spinOnce(log=log)
         else:
-            while self.spinOnce(): pass
+            while self.spinOnce(log=log): pass
 
-    def spinUntilComplete(self, req_id):
+    def spinUntilComplete(self, req_id, *, log: bool = True):
         """
         Blocks and processes incoming messages until the request with the given 'req_id'
         is marked as complete in the pending requests table.
@@ -298,7 +301,7 @@ class ZMQRemoteAPI:
             pending = self._pending.get(req_id)
             if pending and pending['done']:
                 return
-            self.spinOnce()
+            self.spinOnce(log=log)
 
     def poll(self, timeout: float = 0) -> bool:
         """
@@ -310,18 +313,18 @@ class ZMQRemoteAPI:
 
         return self._socket.poll(int(timeout * 1000), zmq.POLLIN) > 0
 
-    def send(self, msg: Dict[str, Any], block: bool = False) -> None:
+    def send(self, msg: Dict[str, Any], *, block: bool = False, log: bool = True) -> None:
         """Low-level sender: CBOR-encodes the dict and sends it."""
         if not self._socket:
             raise RuntimeError('Socket not available')
-        self.log(2, 'sending:', msg)
+        if log: self.log(2, 'sending:', msg)
         data = cbor2.dumps(msg, encoders=self._encoders(), default=self._encode_default)
-        self.log(3, f'CBOR payload: {data.hex(' ')}')
+        if log: self.log(3, f'CBOR payload: {data.hex(' ')}')
         self._socket.send(data, flags=0 if block else zmq.DONTWAIT)
         self.lastSendTime = self.time()
-        self.log(2, 'sent')
+        if log: self.log(2, 'sent')
 
-    def recv(self, block: bool = True) -> Optional[Dict[str, Any]]:
+    def recv(self, *, block: bool = True, log: bool = True) -> Optional[Dict[str, Any]]:
         """
         Low-level receiver: receives and CBOR-decodes a message.
 
@@ -331,21 +334,21 @@ class ZMQRemoteAPI:
         if not self._socket:
             raise RuntimeError('Socket not available')
         if block:
-            self.log(2, 'receiving... (block)')
+            if log: self.log(2, 'receiving... (block)')
             data = self._socket.recv()
         else:
             try:
                 data = self._socket.recv(flags=zmq.NOBLOCK)
             except zmq.Again:
                 return None
-        self.log(2, f'received {len(data)} bytes')
-        self.log(3, f'CBOR payload: {data.hex(' ')}')
+        if log: self.log(2, f'received {len(data)} bytes')
+        if log: self.log(3, f'CBOR payload: {data.hex(' ')}')
         try:
             msg = cbor2.loads(data, tag_hook=self._tag_hook)
         except Exception as e:
-            self.log(1, f'invalid CBOR data: {e!s}')
+            if log: self.log(1, f'invalid CBOR data: {e!s}')
             return None
-        self.log(2, 'received:', msg)
+        if log: self.log(2, 'received:', msg)
         self.lastRecvTime = self.time()
         return msg
 
@@ -559,7 +562,7 @@ class PythonWrapper:
             verbose = verbose,
         )
         if barePrint is False:
-            self.rapi.print = lambda *args: self.rapi.call(None, '__print', *map(str, args))
+            self.rapi.print = lambda *args: self.rapi.callEx(None, '__print', tuple(map(str, args)), log=False)
 
         self.sysCalls = sysCalls
         sim.Object._callMethod = self.rapi.call
