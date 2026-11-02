@@ -571,14 +571,20 @@ class PythonWrapper:
     def isServerAlive(self) -> bool:
         import psutil
         if self._server_process is None:
+            self.rapi.log(2, f'isServerAlive: warning: server process not known')
             return False
         try:
             if not self._server_process.is_running():
+                self.rapi.log(2, f'isServerAlive: server process is not running')
                 return False
             with self._server_process.oneshot():
                 return (self._server_process.status() != psutil.STATUS_ZOMBIE
                         and self._server_process.name() == "coppeliaSim")
-        except (psutil.NoSuchProcess, psutil.AccessDenied):
+        except psutil.NoSuchProcess:
+            self.rapi.log(2, f'isServerAlive: server process does not exist (error: NoSuchProcess)')
+            return False
+        except psutil.AccessDenied:
+            self.rapi.log(2, f'isServerAlive: server process cannot be checked (error: AccessDenied)')
             return False
 
     def registerSysCalls(self):
@@ -605,6 +611,7 @@ class PythonWrapper:
         self.rapi.log(1, 'spinning')
         while self.isServerAlive():
             self.rapi.spinSome()
+        self.rapi.log(1, 'exiting (isServerAlive returned False)')
 
     def registerCmdInterface(self):
         self.rapi.log(1, 'registering cmd intefrace...')
