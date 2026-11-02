@@ -420,6 +420,8 @@ class ZMQRemoteAPI:
             sim.Matrix: lambda e, v: e.encode(v.__cbor__()),
             sim.Quaternion: lambda e, v: e.encode(v.__cbor__()),
             sim.Pose: lambda e, v: e.encode(v.__cbor__()),
+            # np.ndarray provided for convenience -> sim.Matrix:
+            np.ndarray: lambda e, v: e.encode(v.view(sim.Matrix).__cbor__())
         }
 
     def _encode_default(self, encoder: cbor2.CBOREncoder, value: Any) -> None:
