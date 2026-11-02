@@ -46,7 +46,9 @@ Function lookup:
 import zmq
 import cbor2
 import numpy as np
+import psutil
 from typing import Any, Callable, Dict, Optional, Tuple
+from pathlib import Path
 
 import sim
 
@@ -533,7 +535,6 @@ class Env(dict):
 
 class PythonWrapper:
     def __init__(self, _globals: dict[str, Any], *, port: int, client_id: str, sysCalls: list[str], verbose: int = 0, barePrint: bool = False, pid: int = -1, **kwargs):
-        import psutil
         self._server_process = psutil.Process(pid) if pid >= 0 else None
         self._g = _globals
         import sim
@@ -569,7 +570,6 @@ class PythonWrapper:
         self.rapi.log(1, 'initializing...')
 
     def isServerAlive(self) -> bool:
-        import psutil
         if self._server_process is None:
             self.rapi.log(2, f'isServerAlive: warning: server process not known')
             return False
@@ -579,7 +579,7 @@ class PythonWrapper:
                 return False
             with self._server_process.oneshot():
                 return (self._server_process.status() != psutil.STATUS_ZOMBIE
-                        and self._server_process.name() == "coppeliaSim")
+                        and Path(self._server_process.name()).stem == "coppeliaSim")
         except psutil.NoSuchProcess:
             self.rapi.log(2, f'isServerAlive: server process does not exist (error: NoSuchProcess)')
             return False
