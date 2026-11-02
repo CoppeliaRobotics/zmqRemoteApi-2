@@ -578,8 +578,13 @@ class PythonWrapper:
                 self.rapi.log(2, f'isServerAlive: server process is not running')
                 return False
             with self._server_process.oneshot():
-                return (self._server_process.status() != psutil.STATUS_ZOMBIE
-                        and Path(self._server_process.name()).stem == "coppeliaSim")
+                if Path(self._server_process.name()).stem != "coppeliaSim":
+                    self.rapi.log(2, f'isServerAlive: server process name changed -> not alive')
+                    return False
+                if self._server_process.status() == psutil.STATUS_ZOMBIE:
+                    self.rapi.log(2, f'isServerAlive: server process is in zombie status -> not alive')
+                    return False
+                return True
         except psutil.NoSuchProcess:
             self.rapi.log(2, f'isServerAlive: server process does not exist (error: NoSuchProcess)')
             return False
