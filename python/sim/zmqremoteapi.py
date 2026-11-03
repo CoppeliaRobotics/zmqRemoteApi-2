@@ -43,6 +43,7 @@ Function lookup:
     that, when called, will send a remote 'call' to the other side.
 """
 
+import sys
 import zmq
 import cbor2
 import numpy as np
@@ -593,6 +594,8 @@ class PythonWrapper:
         self.rapi.log(1, 'spinning')
         while self.rapi.isRemoteAlive():
             self.rapi.spinSome()
+            sys.stdout.flush()
+            sys.stderr.flush()
         self.rapi.log(1, 'exiting (isRemoteAlive returned False)')
 
     def registerCmdInterface(self):
