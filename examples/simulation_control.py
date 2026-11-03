@@ -29,5 +29,3 @@ print('stopping simulation...')
 scene.simulation.stop()
 while scene.simulation.state != 0: rapi.spinSome()
 print('stopped simulation.')
-
-while 1: rapi.spinSome() # keep client alive & running
