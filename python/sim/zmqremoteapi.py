@@ -46,7 +46,6 @@ Function lookup:
 import zmq
 import cbor2
 import numpy as np
-import psutil
 from typing import Any, Callable, Dict, Optional, Tuple
 from pathlib import Path
 
@@ -536,8 +535,7 @@ class Env(dict):
 
 
 class PythonWrapper:
-    def __init__(self, _globals: dict[str, Any], *, port: int, client_id: str, sysCalls: list[str], verbose: int = 0, barePrint: bool = False, pid: int = -1, **kwargs):
-        self._server_process = psutil.Process(pid) if pid >= 0 else None
+    def __init__(self, _globals: dict[str, Any], *, port: int, client_id: str, sysCalls: list[str], verbose: int = 0, barePrint: bool = False, **kwargs):
         self._g = _globals
         import sim
         self._env = Env(_globals, {
@@ -571,29 +569,6 @@ class PythonWrapper:
         sim.Object._callMethod = self.rapi.call
         self.rapi.log(1, 'initializing...')
 
-    def isServerAlive(self) -> bool:
-        if self._server_process is None:
-            self.rapi.log(2, f'isServerAlive: warning: server process not known')
-            return False
-        try:
-            if not self._server_process.is_running():
-                self.rapi.log(2, f'isServerAlive: server process is not running')
-                return False
-            with self._server_process.oneshot():
-                if Path(self._server_process.name()).stem != "coppeliaSim":
-                    self.rapi.log(2, f'isServerAlive: server process name changed -> not alive')
-                    return False
-                if self._server_process.status() == psutil.STATUS_ZOMBIE:
-                    self.rapi.log(2, f'isServerAlive: server process is in zombie status -> not alive')
-                    return False
-                return True
-        except psutil.NoSuchProcess:
-            self.rapi.log(2, f'isServerAlive: server process does not exist (error: NoSuchProcess)')
-            return False
-        except psutil.AccessDenied:
-            self.rapi.log(2, f'isServerAlive: server process cannot be checked (error: AccessDenied)')
-            return False
-
     def registerSysCalls(self):
         self.rapi.log(1, 'registering sysCalls...')
         for name in self.sysCalls:
@@ -616,9 +591,9 @@ class PythonWrapper:
     def spin(self):
         self.ready()
         self.rapi.log(1, 'spinning')
-        while self.isServerAlive():
+        while self.rapi.isRemoteAlive():
             self.rapi.spinSome()
-        self.rapi.log(1, 'exiting (isServerAlive returned False)')
+        self.rapi.log(1, 'exiting (isRemoteAlive returned False)')
 
     def registerCmdInterface(self):
         self.rapi.log(1, 'registering cmd intefrace...')
