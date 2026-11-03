@@ -14,17 +14,6 @@ rapi = ZMQRemoteAPI(name = 'client', server = False, port = port, verbose = args
 
 sim.Object._callMethod = rapi.call
 
-scene = sim.scene
-
-def s_sensing():
-    print(f'sensing phase (t={scene.simulation.time:.3f})...')
-
-def s_actuation():
-    print(f'actuation phase (t={scene.simulation.time:.3f})...')
-
-rapi.registerCallback('sysCall_sensing', s_sensing, True)
-rapi.registerCallback('sysCall_actuation', s_actuation, True)
-
 print('starting simulation...')
 scene.simulation.start()
 while scene.simulation.state != 17: rapi.spinSome()

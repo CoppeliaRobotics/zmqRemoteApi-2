@@ -10,20 +10,20 @@ port = ZMQRemoteAPI().call(None, 'spawnWorker')
 rapi = ZMQRemoteAPI(port = port, verbose = args.verbose)
 sim.Object._callMethod = rapi.call
 
-def cb():
-    return 'cb'
+scene = sim.scene
 
-def cb2(f):
-    def cb3():
-        return 'cb3'
-    return 'cb2-' + f(cb3)
+def s_init():
+    scene.simulation.start()
 
-print('create object...')
-obj = sim.app.createObject({'type': 'test'})
-print(obj)
-print('invoke obj.testCallback(cb)')
-res = obj.testCallback(cb)
-print('result:', res)
-print('invoke obj.testReentrantCallback(cb2)')
-res = obj.testReentrantCallback(cb2)
-print('result:', res)
+def s_sensing():
+    print(f'sensing phase (t={scene.simulation.time:.3f})...')
+    if scene.simulation.time > 5:
+        scene.simulation.stop()
+
+def s_actuation():
+    print(f'actuation phase (t={scene.simulation.time:.3f})...')
+
+rapi.registerCallback('sysCall_sensing', s_sensing, True)
+rapi.registerCallback('sysCall_actuation', s_actuation, True)
+s_init()
+while 1: rapi.spinSome() # keep client alive & running
