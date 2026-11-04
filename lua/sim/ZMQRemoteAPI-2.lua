@@ -233,7 +233,7 @@ function ZMQRemoteAPI:handleRequest(req)
             end
             if req.sysCall then
                 --_G[req.func] = self._callables[req.func]
-                sim.self:registerFunctionHook(req.func, self._callables[req.func], {when = 'after'})
+                sim.self:registerFunctionHook(req.func, self._callables[req.func], {when = req.func == 'sysCall_cleanup' and 'before' or 'after'})
             end
             return {true} -- result must be packed into an array!
         end)
