@@ -7,7 +7,7 @@ import sim
 from sim.zmqremoteapi import ZMQRemoteAPI
 from time import time
 
-port = ZMQRemoteAPI().call(None, 'spawnWorker')
+port = ZMQRemoteAPI().call(None, 'spawnWorker', {'verbose': args.verbose})
 print('port:', port)
 
 rapi = ZMQRemoteAPI(name = 'client', server = False, port = port, verbose = args.verbose)

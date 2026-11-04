@@ -1,14 +1,14 @@
 import 'sim-2'
 import 'sim.ZMQRemoteAPI-2'
 
-assert(WORKER_PORT, 'WORKER_PORT not defined')
+assert(WORKER_OPTS, 'WORKER_OPTS not defined')
 
 function sysCall_init()
     rapi = sim.ZMQRemoteAPI{
-        name = 'worker-' .. WORKER_PORT,
-        port = WORKER_PORT,
+        name = 'worker-' .. WORKER_OPTS.port,
+        port = WORKER_OPTS.port,
         server = true,
-        verbose = sim.app.customData['zmqRemoteApi2.verbose'] or 0,
+        verbose = WORKER_OPTS.verbose or 0,
     }
     rapi.callMethod = sim.callMethod
     rapi:log(1, 'spawned worker script (handle=' .. sim.self.handle ..')')

@@ -53,15 +53,21 @@ function getPort()
     return port
 end
 
-function spawnWorker()
+function spawnWorker(opts)
+    opts = opts or {}
     worker = {}
-    worker.port = getPort()
+    if opts.port then
+        worker.port = opts.port
+    else
+        worker.port = getPort()
+        opts.port = worker.port
+    end
     worker.script = sim.app:createObject{
         type = 'script',
         language = 'lua',
         addOnMenuPath = 'zmqRemoteApiServerWorker-' .. worker.port,
         code =
-            "WORKER_PORT = " .. worker.port .. "\n" ..
+            "WORKER_OPTS = " .. table.tostring(opts) .. "\n" ..
             "require 'sim.ZMQRemoteAPI-2-worker'",
     }
     rapi_broker:log(1, 'spawning worker for client at port ' .. worker.port, worker.script)
