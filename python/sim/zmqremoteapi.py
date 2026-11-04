@@ -674,14 +674,16 @@ class PythonWrapper:
                 elif t.string == ')':
                     if not stack: return []
                     tstart = stack.pop()
-                    ranges[tstart.string] = (lpos(code, *tstart.start), lpos(code, *t.end))
+                    if tstart:
+                        ranges[tstart.string] = (lpos(code, *tstart.start), lpos(code, *t.end))
                 else:
                     last_name = t
             # flush stack:
             end = len(code)
             while stack:
                 tstart = stack.pop()
-                ranges[tstart.string] = (lpos(code, *tstart.start), end)
+                if tstart:
+                    ranges[tstart.string] = (lpos(code, *tstart.start), end)
 
             ret = []
             for name, (start, end) in ranges.items():
