@@ -333,7 +333,9 @@ function ZMQRemoteAPI:send(msg, block)
     }
     local data = simCBOR.encode(msg, {encodeMap = encodeMap})
     simZMQ.send(self.socket, data, block and 0 or simZMQ.DONTWAIT)
+    self:log(3, 'CBOR payload: ' .. string.byteshex(data))
     self.lastSendTime = self.time()
+    self:log(2, 'sent')
 end
 
 --[[
