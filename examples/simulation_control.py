@@ -15,17 +15,17 @@ rapi = ZMQRemoteAPI(name = 'client', server = False, port = port, verbose = args
 sim.Object._callMethod = rapi.call
 
 print('starting simulation...')
-scene.simulation.start()
-while scene.simulation.state != 17: rapi.spinSome()
+sim.scene.simulation.start()
+while sim.scene.simulation.state != 17: rapi.spinSome()
 print('started simulation.')
 
-print(f'simulation time = {scene.simulation.time:.3f}')
+print(f'simulation time = {sim.scene.simulation.time:.3f}')
 for i in range(5):
-    if scene.simulation.time > 5: break
-    print(f'simulation time = {scene.simulation.time:.3f}')
+    if sim.scene.simulation.time > 5: break
+    print(f'simulation time = {sim.scene.simulation.time:.3f}')
     rapi.spinSome()
 
 print('stopping simulation...')
-scene.simulation.stop()
-while scene.simulation.state != 0: rapi.spinSome()
+sim.scene.simulation.stop()
+while sim.scene.simulation.state != 0: rapi.spinSome()
 print('stopped simulation.')
