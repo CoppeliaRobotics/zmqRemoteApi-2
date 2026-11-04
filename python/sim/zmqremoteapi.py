@@ -272,6 +272,8 @@ class ZMQRemoteAPI:
         Returns true if a message was received and handled, otherwise False.
         """
         self._sendKeepAlive()
+        if not self.isRemoteAlive():
+            raise Exception('remote script has stopped responding')
         msg = self.recv(block=False, log=log)
         if msg:
             self.handleRequest(msg)

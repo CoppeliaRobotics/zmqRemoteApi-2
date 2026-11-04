@@ -259,6 +259,9 @@ end
 --]]
 function ZMQRemoteAPI:spinOnce()
     self:_sendKeepAlive()
+    if not self:isRemoteAlive() then
+        error('remote script has stopped responding')
+    end
     local msg = self:recv(false)
     if msg then
         self:handleRequest(msg)
