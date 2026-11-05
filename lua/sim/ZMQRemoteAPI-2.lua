@@ -44,7 +44,7 @@
 --]]
 local class = require 'middleclass'
 local sim = require 'sim-2'
-local simCBOR = require 'simCBOR'
+local sim_cbor = require 'sim.cbor'
 local simZMQ = require 'simZMQ'
 local array = require 'array'
 simZMQ.__raiseErrors()
@@ -331,10 +331,10 @@ function ZMQRemoteAPI:send(msg, block)
                 self._callables[name] = f
             end
             local cbor_c = require 'org.conman.cbor_c'
-            return cbor_c.encode(0xC0, 4294999997) .. simCBOR.encode(name)
+            return cbor_c.encode(0xC0, 4294999997) .. sim_cbor.encode(name)
         end,
     }
-    local data = simCBOR.encode(msg, {encodeMap = encodeMap})
+    local data = sim_cbor.encode(msg, {encodeMap = encodeMap})
     simZMQ.send(self.socket, data, block and 0 or simZMQ.DONTWAIT)
     self:log(3, 'CBOR payload: ' .. string.byteshex(data))
     self.lastSendTime = self.time()
@@ -360,7 +360,7 @@ function ZMQRemoteAPI:recv(block)
             end
         end,
     }
-    local ok, msg = pcall(simCBOR.decode, data, {typeTags = typeTags})
+    local ok, msg = pcall(sim_cbor.decode, data, {typeTags = typeTags})
     if not ok then
         self:log(1, 'invalid CBOR data')
         return

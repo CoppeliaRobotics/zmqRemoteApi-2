@@ -1,6 +1,4 @@
 local sim = require 'sim-2'
-local simZMQ
-local cbor
 
 sim.ZMQRemoteAPI = require 'sim.ZMQRemoteAPI-2'
 
