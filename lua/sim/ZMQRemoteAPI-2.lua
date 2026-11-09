@@ -59,8 +59,17 @@ function ZMQRemoteAPI:initialize(opts)
     self.lastSendTime = 0
     self.lastRecvTime = 0
     self.keepAliveInterval = 5
+    -- Overrides the "remote is gone" silence tolerance: nil = 2 x
+    -- keepAliveInterval, 0 = never (see isRemoteAlive).
+    self.remoteSilenceTimeout = nil
     self.time = function() return sim.app.systemTime end
     self.print = print
+
+    -- When blocking is set, a call waits on a blocking zmq_poll and reacts as
+    -- soon as a message arrives (no timeout granularity). Used by the Python
+    -- wrapper. When false (default), waits stay preemptable: they poll in small
+    -- slices so that the Lua thread can yield (used e.g. by the worker script).
+    self.blocking = not not opts.blocking
 
     local ctx = simZMQ.ctx_singleton()
     local host = opts.host or '127.0.0.1'
@@ -69,15 +78,58 @@ function ZMQRemoteAPI:initialize(opts)
     -- Both sides use DEALER to allow asynchronous bidirectional communication.
     self.socket = simZMQ.socket(ctx, simZMQ.DEALER)
     if self.server then
-        simZMQ.bind(self.socket, 'tcp://*:' .. port)
+        -- Do not ignore a failed bind: an unbound server would leave every
+        -- client waiting forever (the failure is otherwise silent, since
+        -- error raising is disabled on the simZMQ wrappers).
+        local r = simZMQ.bind(self.socket, 'tcp://*:' .. port)
+        if r ~= 0 then
+            error('could not bind to port ' .. port)
+        end
     else
-        simZMQ.connect(self.socket, 'tcp://' .. host .. ':' .. port)
+        local r = simZMQ.connect(self.socket, 'tcp://' .. host .. ':' .. port)
+        if r ~= 0 then
+            error('could not connect to ' .. host .. ':' .. port)
+        end
     end
 
     -- Tables for pending requests and local callable functions.
     self._pending = {}          -- id -> { done, result, error }
     self._callables = {}        -- funcName -> function
     self.__nextId = 0           -- simple incremental ID generator
+
+    -- Requests that could not be handled in the current context and were
+    -- deferred to a later spin (see `shouldDeferRequest` below).
+    self._deferred = {}
+    self.shouldDeferRequest = nil -- optional function(req) -> bool
+
+    -- Built once (instead of for each message) to avoid per-message garbage:
+    self._encodeOpts = {
+        encodeMap = {
+            ['function'] = function(f)
+                local name = '@tmpcallback_' .. string.functostring(f)
+                if self._callables[name] == nil then
+                    self._callables[name] = f
+                end
+                local cbor_c = require 'org.conman.cbor_c'
+                return cbor_c.encode(0xC0, 4294999997) .. sim_cbor.encode(name)
+            end,
+        },
+    }
+    self._decodeOpts = {
+        typeTags = {
+            TAG_4294999997 = function(value)
+                return function(...)
+                    return self:call(nil, value, ...)
+                end
+            end,
+        },
+    }
+    self._keepAliveCnt = 0
+
+    -- Built-in diagnostic: lets a client check that this side is alive and
+    -- serving. It can be called with a timeout, e.g.
+    -- rapi.callEx(None, '__ping', (), timeout=5.0).
+    self._callables['__ping'] = function() return 'pong' end
 end
 
 function ZMQRemoteAPI:cleanup()
@@ -119,13 +171,18 @@ end
 
 --[[
   Helper: sends a request and waits for its response.
+  When `yielding` is true, the wait remains preemptable (it polls in small
+  slices so that the Lua thread can yield and the simulation can advance).
+  Use that for calls that may take an arbitrarily long time to be answered,
+  e.g. a Python sysCall_thread: what is being waited for is not a simple
+  reply, but a whole Python thread execution.
 --]]
-function ZMQRemoteAPI:_sendRequestAndWait(req)
+function ZMQRemoteAPI:_sendRequestAndWait(req, yielding)
     local req_id = self:_nextId()
     req.id = req_id
     self._pending[req_id] = { done = false, result = nil, error = nil }
     self:send(req)
-    self:spinUntilComplete(req_id)
+    self:spinUntilComplete(req_id, yielding)
     local pending = self._pending[req_id]
     assert(pending and pending.done)
     self._pending[req_id] = nil
@@ -138,9 +195,14 @@ end
 
 --[[
   Helper: sends a keep-alive message (noop) if needed.
+  The system time is relatively expensive to read, and the keep-alive interval
+  is several seconds, so it is only checked every now and then.
 --]]
 function ZMQRemoteAPI:_sendKeepAlive()
     if self.keepAliveInterval <= 0 then return end
+    self._keepAliveCnt = self._keepAliveCnt + 1
+    if self._keepAliveCnt < 16 then return end
+    self._keepAliveCnt = 0
     if self.lastSendTime + self.keepAliveInterval < self.time() then
         self:send {msg = 'noop'}
     end
@@ -148,12 +210,21 @@ end
 
 --[[
   Helper: return true if remote is alive (i.e. has sent any message within
-  double of the keepAliveInterval).
+  double of the keepAliveInterval). A 'bye' message sent by the other side
+  (see Python ZMQRemoteAPI.cleanup) makes this return false immediately.
+
+  `remoteSilenceTimeout` overrides the silence tolerance (0 disables it, for
+  owners that detect the other side's death by other means, e.g. the embedded
+  Python wrapper, which polls its subprocess).
 --]]
 function ZMQRemoteAPI:isRemoteAlive()
+    if self._remoteBye then return false end
     if self.keepAliveInterval <= 0 then return true end
     if self.lastRecvTime <= 0 then return true end
-    return self.lastRecvTime + 2 * self.keepAliveInterval >= self.time()
+    local timeout = self.remoteSilenceTimeout
+    if timeout == nil then timeout = 2 * self.keepAliveInterval end
+    if timeout <= 0 then return true end
+    return self.lastRecvTime + timeout >= self.time()
 end
 
 --[[
@@ -165,6 +236,19 @@ function ZMQRemoteAPI:call(target, funcName, ...)
     local args = array:pack(...)
     local req = { msg = 'call', target = target, func = funcName, args = args }
     return self:_sendRequestAndWait(req)
+end
+
+--[[
+  Same as call(), but the wait stays preemptable: in a Lua thread the call may
+  be suspended (yield) while waiting, so that the simulation keeps running.
+  Meant for calls that can take a long time to be answered (e.g. a Python
+  sysCall_thread, which only returns when the Python thread function returns).
+--]]
+function ZMQRemoteAPI:callYielding(target, funcName, ...)
+    assert(type(funcName) == 'string', 'invalid function name type')
+    local args = array:pack(...)
+    local req = { msg = 'call', target = target, func = funcName, args = args }
+    return self:_sendRequestAndWait(req, true)
 end
 
 --[[
@@ -205,6 +289,26 @@ end
 function ZMQRemoteAPI:handleRequest(req)
     local msg = req.msg
     assert(type(msg) == 'string', 'malformed request')
+
+    -- The owner may decide that requests must be ignored altogether (e.g. a
+    -- simulation-only worker once the simulation has been stopped): they are
+    -- neither executed nor answered.
+    if (msg == 'call' or msg == 'registerCallback') and self.shouldIgnoreRequest
+        and self.shouldIgnoreRequest(req) then
+        self:log(2, 'ignoring request:', msg, req.func)
+        return
+    end
+
+    -- The owner may decide that a request cannot be handled in the current
+    -- context (e.g. because it has to run in a specific Lua coroutine). Such
+    -- a request is only answered once it is picked up from the deferred queue
+    -- in a context where it can be handled.
+    if self.shouldDeferRequest and self.shouldDeferRequest(req) then
+        self._deferred[#self._deferred + 1] = req
+        self:log(2, 'deferred request:', msg, req.func)
+        return
+    end
+
     local req_id = req.id
 
     if msg == 'call' then
@@ -232,8 +336,36 @@ function ZMQRemoteAPI:handleRequest(req)
                 return self:call(nil, req.func, ...)
             end
             if req.sysCall then
-                --_G[req.func] = self._callables[req.func]
-                sim.self:registerFunctionHook(req.func, self._callables[req.func], {when = req.func == 'sysCall_cleanup' and 'before' or 'after'})
+                -- sysCall_thread is special: it is not a regular callback (it is
+                -- driven by the owner, i.e. the worker script or the Python
+                -- wrapper, from a thread coroutine). Register a function hook
+                -- for everything else. Cleanup is a "before" hook so that the
+                -- remote side is still connected when it runs.
+                if req.func ~= 'sysCall_thread' then
+                    local when = 'after'
+                    if req.func == 'sysCall_cleanup' then when = 'before' end
+                    local cb = self._callables[req.func]
+                    if req.func == 'sysCall_cleanup' then
+                        -- This script may be cleaned up long after the remote
+                        -- side went away (e.g. the client process was killed).
+                        -- Calling into it then would block until the liveness
+                        -- timeout and raise from within sysCall_cleanup. Also
+                        -- never let a failing cleanup callback raise: a cleanup
+                        -- is not the place to report such an error.
+                        local cleanupCb = cb
+                        cb = function(...)
+                            if not self:isRemoteAlive() then
+                                self:log(2, 'not calling the remote cleanup callback: remote is gone')
+                                return
+                            end
+                            local ok2, err2 = pcall(cleanupCb, ...)
+                            if not ok2 then
+                                self:log(1, 'remote cleanup callback failed:', err2)
+                            end
+                        end
+                    end
+                    sim.self:registerFunctionHook(req.func, cb, {when = when})
+                end
             end
             return {true} -- result must be packed into an array!
         end)
@@ -248,21 +380,32 @@ function ZMQRemoteAPI:handleRequest(req)
             self:log(1, 'received result for unknown id:', req_id)
         end
     elseif msg == 'noop' then
+    elseif msg == 'bye' then
+        -- The other side is leaving: no reply is sent, but this side can stop
+        -- waiting for messages that will never come.
+        self._remoteBye = true
     else
         self:log(1, 'unsupported message:', msg)
     end
 end
 
 --[[
-  Processes a single incoming message if one is available.
+  Processes a single incoming message if one is available (or, with `block`,
+  waits until one arrives).
   Returns true if a message was received and handled, otherwise false.
+  Deferred requests are handled first, as soon as the context allows it.
 --]]
-function ZMQRemoteAPI:spinOnce()
+function ZMQRemoteAPI:spinOnce(block)
     self:_sendKeepAlive()
-    if not self:isRemoteAlive() then
-        error('remote script has stopped responding')
+    if #self._deferred > 0 then
+        local req = self._deferred[1]
+        if not (self.shouldDeferRequest and self.shouldDeferRequest(req)) then
+            table.remove(self._deferred, 1)
+            self:handleRequest(req)
+            return true
+        end
     end
-    local msg = self:recv(false)
+    local msg = self:recv(block)
     if msg then
         self:handleRequest(msg)
         return true
@@ -293,16 +436,84 @@ function ZMQRemoteAPI:spinSome(timeout)
 end
 
 --[[
+  Serves the connection while the simulation is paused, without executing
+  incoming requests.
+
+  Keep-alives are exchanged (so neither side considers the other gone) and
+  replies to our own pending requests are processed, but 'call' and
+  'registerCallback' requests are queued instead of being executed: they are
+  only handled by spinOnce() once the simulation runs again. That way a client
+  keeps running only while the simulation is running, and simply resumes where
+  it left off (it stays blocked on its pending call meanwhile).
+--]]
+function ZMQRemoteAPI:spinSuspended()
+    if self._remoteBye then return end
+    self:_sendKeepAlive()
+    while true do
+        local msg = self:recv(false)
+        if msg == nil then return end
+        if msg.msg == 'call' or msg.msg == 'registerCallback' then
+            self._deferred[#self._deferred + 1] = msg
+        else
+            self:handleRequest(msg) -- noop, result, bye
+        end
+    end
+end
+
+--[[
   Blocks and processes incoming messages until the request with the given 'req_id'
   is marked as complete in the pending requests table.
+
+  With a blocking API instance, this waits on a blocking zmq_poll: the call
+  returns as soon as any message arrives (a reply, but also a re-entrant call
+  from the other side), with no timeout granularity involved.
+
+  With a yielding=... call (see callYielding), the wait stays preemptable: it
+  receives without blocking and polls in 1ms slices, so that the Lua thread can
+  yield and the simulation keeps running while e.g. Python executes the thread.
 --]]
-function ZMQRemoteAPI:spinUntilComplete(req_id)
+function ZMQRemoteAPI:spinUntilComplete(req_id, yielding)
+    local blocking = self.blocking and not yielding
+    local stall = 0
     while true do
         local pending = self._pending[req_id]
         if pending.done then
             return
         end
-        self:spinOnce()
+        if blocking then
+            self:spinOnce(true)
+        else
+            if not self:spinOnce(false) then
+                if yielding then
+                    -- A thread that waits for the other side must not wait
+                    -- forever if that side disappeared (e.g. the external client
+                    -- process was closed while its sysCall_thread was running).
+                    -- Check about twice per second; the check itself is only
+                    -- done then (it reads a property).
+                    stall = stall + 1
+                    if stall >= 500 then
+                        stall = 0
+                        -- Owner hook: may abort the wait (e.g. the worker's
+                        -- runOnlyDuringSimulation policy once the simulation is
+                        -- stopped).
+                        if self.onWaitTick then
+                            local ok2, err2 = pcall(self.onWaitTick)
+                            if not ok2 then
+                                self._pending[req_id] = nil
+                                error(err2, 0)
+                            end
+                        end
+                        if not self:isRemoteAlive() then
+                            self._pending[req_id] = nil
+                            error('the remote side is not responding anymore')
+                        end
+                    end
+                end
+                self:poll(0.001)
+            else
+                stall = 0
+            end
+        end
     end
 end
 
@@ -317,6 +528,43 @@ function ZMQRemoteAPI:poll(timeout)
 end
 
 --[[
+  Blocks until a message is available. This is a true blocking zmq_poll: it
+  returns as soon as a message arrives, i.e. without any polling granularity.
+  A (long) timeout is used only to periodically give the owner a chance to
+  check that the remote side is still alive (see `onWaitTimeout`).
+--]]
+function ZMQRemoteAPI:waitForData()
+    assert(self.socket)
+    local failures = 0
+    while true do
+        local n = simZMQ.poll({self.socket}, {simZMQ.POLLIN}, 500)
+        if n > 0 then
+            return
+        elseif n < 0 then
+            -- Usually an interruption (EINTR): retry a few times.
+            failures = failures + 1
+            if failures >= 10 then
+                error('ZMQ poll failed: ' .. tostring(simZMQ.strerror(simZMQ.errnum())))
+            end
+        else
+            failures = 0
+            -- Keep the connection alive while we wait: the other side applies
+            -- the same liveness timeout to us, so a long wait (e.g. while it
+            -- computes, or while the simulation is paused) must not look dead.
+            self:_sendKeepAlive()
+            if self.onWaitTimeout then
+                self.onWaitTimeout() -- may raise (e.g. remote process died)
+            elseif not self:isRemoteAlive() then
+                -- Keep the stock behaviour for owners that don't override
+                -- onWaitTimeout (e.g. the worker script): do not block forever
+                -- when the other side is gone.
+                error('the remote side is not responding anymore')
+            end
+        end
+    end
+end
+
+--[[
   Low‑level send: CBOR‑encodes and sends the message.
   The message must be a table containing at least an `id` and `msg` field.
 --]]
@@ -324,43 +572,25 @@ function ZMQRemoteAPI:send(msg, block)
     assert(self.socket)
     assert(type(msg) == 'table', 'bad type')
     self:log(2, 'sending:', msg)
-    local encodeMap = {
-        ['function'] = function(f)
-            local name = '@tmpcallback_' .. string.functostring(f)
-            if self._callables[name] == nil then
-                self._callables[name] = f
-            end
-            local cbor_c = require 'org.conman.cbor_c'
-            return cbor_c.encode(0xC0, 4294999997) .. sim_cbor.encode(name)
-        end,
-    }
-    local data = sim_cbor.encode(msg, {encodeMap = encodeMap})
+    local data = sim_cbor.encode(msg, self._encodeOpts)
     simZMQ.send(self.socket, data, block and 0 or simZMQ.DONTWAIT)
-    self:log(3, 'CBOR payload: ' .. string.byteshex(data))
     self.lastSendTime = self.time()
-    self:log(2, 'sent')
 end
 
 --[[
   Low‑level receive: waits for a message and decodes it.
-  @param block: if true, blocks indefinitely; if false, uses NOBLOCK.
+  @param block: if true, waits on a blocking poll; if false, uses NOBLOCK.
   Returns the decoded table, or nil if no message is available (non‑block).
 --]]
 function ZMQRemoteAPI:recv(block)
     assert(self.socket)
     if block then
         self:log(2, 'receiving... (block)')
+        self:waitForData()
     end
-    local r, data = simZMQ.recv(self.socket, block and 0 or simZMQ.NOBLOCK)
+    local r, data = simZMQ.recv(self.socket, simZMQ.NOBLOCK)
     if r == -1 then return end
-    local typeTags = {
-        TAG_4294999997 = function(value)
-            return function(...)
-                return self:call(nil, value, ...)
-            end
-        end,
-    }
-    local ok, msg = pcall(sim_cbor.decode, data, {typeTags = typeTags})
+    local ok, msg = pcall(sim_cbor.decode, data, self._decodeOpts)
     if not ok then
         self:log(1, 'invalid CBOR data')
         return

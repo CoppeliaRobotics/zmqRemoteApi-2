@@ -47,13 +47,37 @@ end
 
 function getPort()
     local port = nextWorkerPort or 24500
-    nextWorkerPort = port + 1
-    return port
+    local simZMQ = require 'simZMQ'
+    -- Only hand out a port that can actually be bound: a worker that fails to
+    -- bind would leave its client waiting forever, without any error.
+    while port < 65535 do
+        nextWorkerPort = port + 1
+        local ctx = simZMQ.ctx_singleton()
+        local sock = simZMQ.socket(ctx, simZMQ.REP)
+        local available = (simZMQ.bind(sock, 'tcp://*:' .. port) == 0)
+        simZMQ.close(sock)
+        if available then
+            return port
+        end
+        port = port + 1
+    end
+    error('no free port available for a worker')
 end
+
+-- Values of the `script.state` property (same as sim.scriptState):
+--   0 unloaded, 1 uninitialized, 2 initialized (running), 3 ended, 4 suspended
+local SCRIPT_STATE_INITIALIZED = 2
+local SCRIPT_STATE_NAMES = {
+    [0] = 'unloaded',
+    [1] = 'uninitialized',
+    [2] = 'initialized',
+    [3] = 'ended',
+    [4] = 'suspended',
+}
 
 function spawnWorker(opts)
     opts = opts or {}
-    worker = {}
+    local worker = {}
     if opts.port then
         worker.port = opts.port
     else
@@ -69,7 +93,23 @@ function spawnWorker(opts)
             "require 'sim.ZMQRemoteAPI-2-worker'",
     }
     rapi_broker:log(1, 'spawning worker for client at port ' .. worker.port, worker.script)
-    worker.script:init()
+    worker.script:init() -- synchronous for another script: sysCall_init runs now
+
+    -- init() is synchronous here, so a worker that is still serviceable must be
+    -- in the 'initialized' state. If it failed (e.g. its sysCall_init raised),
+    -- report that to the client instead of letting it wait forever for a worker
+    -- that will never answer.
+    local ok, state = pcall(function() return worker.script.state end)
+    if (not ok) or (state ~= SCRIPT_STATE_INITIALIZED) then
+        local s = 'unknown'
+        if ok then
+            s = tostring(state) .. ' (' .. (SCRIPT_STATE_NAMES[state] or 'unknown') .. ')'
+        end
+        error('the worker script failed to initialize (state=' .. s ..
+              '); check the simulator console for errors related to the worker script (port ' ..
+              worker.port .. ')')
+    end
+
     workers[worker.port] = worker
     return worker.port
 end

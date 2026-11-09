@@ -53,6 +53,197 @@ from pathlib import Path
 import sim
 
 
+class _Table(dict):
+    """A Lua table received by value: supports t.key as well as t['key']."""
+
+    def __getattr__(self, k: str) -> Any:
+        try:
+            return self[k]
+        except KeyError:
+            raise AttributeError(k) from None
+
+
+def _toValue(v: Any) -> Any:
+    if isinstance(v, dict):
+        return _Table({k: _toValue(x) for k, x in v.items()})
+    if isinstance(v, list):
+        return [_toValue(x) for x in v]
+    return v
+
+
+def _encodeArg(v: Any) -> Any:
+    """Converts a call argument: a LuaObjectProxy becomes its registry marker."""
+    if isinstance(v, LuaObjectProxy):
+        return {'__luaObject': v._id}
+    if isinstance(v, dict):
+        return {k: _encodeArg(x) for k, x in v.items()}
+    if isinstance(v, (list, tuple)):
+        return [_encodeArg(x) for x in v]
+    return v
+
+
+def _encodeArgs(args: tuple) -> list:
+    return [_encodeArg(a) for a in args]
+
+
+def _convertResult(v: Any, client: 'ZMQRemoteAPI', module_name: str) -> Any:
+    """Converts a module result: Lua object markers become LuaObjectProxy."""
+    if isinstance(v, dict):
+        if '__luaObject' in v:
+            return LuaObjectProxy(client, module_name, v['__luaObject'])
+        return _Table({k: _convertResult(x, client, module_name) for k, x in v.items()})
+    if isinstance(v, list):
+        return [_convertResult(x, client, module_name) for x in v]
+    return v
+
+
+def _unpackResult(res: Any) -> Any:
+    if isinstance(res, (list, tuple)):
+        if len(res) == 0: return None
+        if len(res) == 1: return res[0]
+        return tuple(res)
+    return res
+
+
+class LuaObjectProxy:
+    """
+    Proxy to a Lua object created by a module, e.g. the instance returned by
+    `Motion.MoveToPose(params)`.
+
+    The Lua object lives in the Lua state; it is kept in a registry there and
+    addressed by an integer id. Attribute access yields a callable that invokes
+    the method **with the object as self**, so the Lua side sees a normal
+    `object:method(...)` call:
+
+        motion = Motion.MoveToPose(params)
+        motion.run()
+        motion.remove()
+    """
+
+    def __init__(self, client: 'ZMQRemoteAPI', module_name: str, object_id: int):
+        self._client = client
+        self._module = module_name
+        self._id = object_id
+        self._members: Dict[str, Any] = {}
+
+    def __getattr__(self, name: str) -> Any:
+        if name.startswith('_'):
+            raise AttributeError(name)
+        try:
+            return self._members[name]
+        except KeyError:
+            pass
+        info = self._client.call(
+            None, '__moduleObjectMember', self._module, self._id, name) or {}
+        kind = info.get('kind')
+        if kind == 'function':
+            def member(*args: Any) -> Any:
+                return self._invoke(name, args)
+            member.__name__ = f'{self._module}.{name}'
+        elif kind == 'value':
+            member = _convertResult(info.get('value'), self._client, self._module)
+        elif kind == 'object':
+            member = LuaObjectProxy(self._client, self._module, info.get('id'))
+        elif kind == 'nil':
+            raise AttributeError(f"module object has no attribute '{name}'")
+        else:
+            member = _Table()
+        self._members[name] = member
+        return member
+
+    def _invoke(self, name: str, args: tuple) -> Any:
+        try:
+            res = self._client.call(
+                None, '__moduleObjectCall', self._module, self._id, name, _encodeArgs(args))
+        except Exception as e:
+            raise RuntimeError(f'{self._module}.{name}: {e}') from e
+        if isinstance(res, (list, tuple)):
+            return _unpackResult([_convertResult(r, self._client, self._module) for r in res])
+        return _convertResult(res, self._client, self._module)
+
+    def __repr__(self) -> str:
+        return f'sim.LuaObject({self._module!r}, {self._id})'
+
+
+class ModuleProxy:
+    """
+    Proxy to one of CoppeliaSim's Lua modules (e.g. 'simUI', 'simOMPL',
+    'simIK', 'simVision', 'simAssimp', 'Motion').
+
+    Those modules are Lua tables (often backed by a C plugin, e.g.
+    `simUI = loadPlugin 'simUI'`) living in the Lua state of the script or
+    worker; they cannot be imported into the Python process. The proxy runs
+    them on that Lua state:
+
+        simUI = rapi.module('simUI')
+        ui = simUI.create(xml)
+        simUI.show(ui)
+        simUI.curve_type.xy          # constants/sub-tables work too
+        simUI.curve_style.scatter
+
+        Motion = rapi.module('Motion')   # Lua objects (classes) work too
+        motion = Motion.MoveToPose(params)
+        motion.run()
+
+    Each attribute is resolved on first access (and cached) as a function or
+    callable table, a value, a sub-table, or a Lua object: functions become
+    callables, plain tables become dicts that also allow attribute access
+    (`_Table`), sub-tables containing functions become nested proxies, and Lua
+    objects become `LuaObjectProxy` instances.
+
+    Function return values follow Lua's multiple returns: one value as-is,
+    several as a tuple, none as None. Only CBOR-representable values can be
+    transferred (numbers, strings, booleans, lists, maps); Lua objects are
+    represented by a registry id and wrapped in a proxy.
+    """
+
+    def __init__(self, client: 'ZMQRemoteAPI', name: str, path: tuple = ()):
+        self._client = client
+        self._name = name
+        self._path = tuple(path)
+        self._members: Dict[str, Any] = {}
+
+    def __getattr__(self, k: str) -> Any:
+        if k.startswith('_'):
+            raise AttributeError(k)
+        try:
+            return self._members[k]
+        except KeyError:
+            pass
+        path = self._path + (k,)
+        info = self._client.call(None, '__moduleMember', self._name, list(path)) or {}
+        kind = info.get('kind')
+        if kind == 'function':
+            def member(*args: Any) -> Any:
+                return self._invoke(path, args)
+            member.__name__ = '.'.join((self._name,) + path)
+        elif kind == 'value':
+            member = _convertResult(info.get('value'), self._client, self._name)
+        elif kind == 'object':
+            member = LuaObjectProxy(self._client, self._name, info.get('id'))
+        elif kind == 'nil':
+            raise AttributeError(f"module '{self._name}' has no attribute '{k}'")
+        else:
+            member = ModuleProxy(self._client, self._name, path)
+        self._members[k] = member
+        return member
+
+    def _invoke(self, path: tuple, args: tuple) -> Any:
+        try:
+            res = self._client.call(None, '__moduleCall', self._name, list(path), _encodeArgs(args))
+        except Exception as e:
+            raise RuntimeError(
+                f"{self._name}.{'.'.join(map(str, path))}: {e}") from e
+        if isinstance(res, (list, tuple)):
+            return _unpackResult([
+                _convertResult(r, self._client, self._name) for r in res])
+        return _convertResult(res, self._client, self._name)
+
+    def __repr__(self) -> str:
+        p = '.'.join(self._path)
+        return f'sim.Module({self._name!r}' + (f', {p!r})' if p else ')')
+
+
 class ZMQRemoteAPI:
     def __init__(self, *, host: str = '127.0.0.1', port: int = 24020, name: str | None = None, server: bool = False, verbose: int = 0, **kwargs):
         self.name = name
@@ -68,6 +259,9 @@ class ZMQRemoteAPI:
         self._context = zmq.Context()
         # Both sides use DEALER to allow asynchronous bidirectional communication.
         self._socket = self._context.socket(zmq.DEALER)
+        # Never block on close/term because of messages that can no longer be
+        # delivered (e.g. when the peer has disappeared).
+        self._socket.setsockopt(zmq.LINGER, 0)
 
         if self.server:
             self._socket.bind(f'tcp://*:{port}')
@@ -81,12 +275,59 @@ class ZMQRemoteAPI:
         self._pending: Dict[int, Dict[str, Any]] = {}
         self.__nextId = 0
 
+        # Names of the calls currently being handled, innermost last. Used to
+        # mark re-entrant requests as 'nested', and to verify that step() is
+        # really executed in the thread callback.
+        self._callStack: list[str] = []
+
+        # The encoder map is constant: build it once instead of for each message.
+        self._encoders_cache = self._encoders()
+
+        # Set when the remote side sends 'bye' (it is about to disappear).
+        self._remoteBye = False
+
+        # Optional owner hook: resolves an incoming call name that is not in
+        # self.callables (e.g. the embedded wrapper resolves it from the user
+        # script's namespace, so 'myFunc#ext' can reach a plain Python function).
+        self.resolveCallable: Optional[Callable[[str], Any]] = None
+
+        # Silence (in seconds) after which the remote side is considered gone.
+        # CoppeliaSim can halt *all* scripts for a while (popup menu, modal
+        # dialog, edit mode) without being dead, so this is generous by default;
+        # 0 disables the check entirely (the embedded wrapper does that: the Lua
+        # side kills this process when the script is cleaned up).
+        self.remoteSilenceTimeout: float | None = 60.0
+
+        # Set once sysCall_cleanup has run (called by the remote side, or by
+        # cleanup() below when we are the first to leave).
+        self._sysCallCleanupDone = False
+
     def cleanup(self) -> None:
-        """Close the socket and terminate the ZMQ context."""
+        """Run sysCall_cleanup if needed, tell the remote side we are leaving, then close."""
         if self._socket:
+            # If the remote side did not run our sysCall_cleanup (typically
+            # because we are the first to leave), run it now, while the
+            # connection is still up. The worker runs it itself when it
+            # terminates (e.g. at simulation end), in which case this is skipped.
+            if not self._sysCallCleanupDone and 'sysCall_cleanup' in self.callables:
+                self._sysCallCleanupDone = True
+                try:
+                    self.callables['sysCall_cleanup']()
+                except Exception as e:
+                    self.log(1, 'sysCall_cleanup failed:', e)
+            try:
+                # ZMQ does not notify the peer when a DEALER socket disappears
+                # (killing this process looks exactly like silence). Say goodbye
+                # explicitly so that the remote side can terminate right away
+                # instead of waiting for its liveness timeout.
+                self.send({'msg': 'bye'}, log=False)
+                self._socket.setsockopt(zmq.LINGER, 200)  # let the bye flush
+            except Exception:
+                pass
             self._socket.close()
             self._context.term()
             self._socket = None
+            self._context = None
 
     def __del__(self) -> None:
         self.cleanup()
@@ -109,15 +350,17 @@ class ZMQRemoteAPI:
         self.__nextId += 1
         return self.__nextId
 
-    def _sendRequestAndWait(self, req: Dict[str, Any], *, log: bool = True) -> Any:
+    def _sendRequestAndWait(self, req: Dict[str, Any], *, log: bool = True, timeout: float | None = None) -> Any:
         """
         Helper: sends a request and waits for its response.
+        With `timeout`, raises TimeoutError if no reply arrives in time (useful
+        e.g. for the initial handshake with the server).
         """
         req_id = self._nextId()
         req['id'] = req_id
         self._pending[req_id] = {'done': False, 'result': None, 'error': False}
         self.send(req, log=log)
-        self.spinUntilComplete(req_id, log=log)
+        self.spinUntilComplete(req_id, log=log, timeout=timeout)
         pending = self._pending.get(req_id)
         assert pending and pending['done']
         del self._pending[req_id]
@@ -148,22 +391,73 @@ class ZMQRemoteAPI:
     def isRemoteAlive(self):
         """
         Helper: return True if remote is alive (i.e. has sent any message within
-        double of the keepAliveInterval).
+        the silence tolerance). A 'bye' message from the remote side makes this
+        return False immediately.
+
+        `remoteSilenceTimeout` overrides the tolerance: None = 2 *
+        keepAliveInterval, 0 = never (for a peer that cannot notify us but whose
+        silence is not death, e.g. CoppeliaSim while a popup menu is open).
         """
+        if self._remoteBye:
+            return False
         if self.keepAliveInterval <= 0: return True
         if self.lastRecvTime <= 0: return True
-        return self.lastRecvTime + 2 * self.keepAliveInterval >= self.time()
+        timeout = self.remoteSilenceTimeout
+        if timeout is None:
+            timeout = 2 * self.keepAliveInterval
+        if timeout <= 0:
+            return True
+        return self.lastRecvTime + timeout >= self.time()
 
     def call(self, target: Optional[int], func_name: str, *args: Any) -> Any:
         return self.callEx(target, func_name, args)
 
-    def callEx(self, target: Optional[int], func_name: str, args: tuple[Any], *, log: bool = True) -> Any:
+    def callEx(self, target: Optional[int], func_name: str, args: tuple[Any], *, log: bool = True,
+               timeout: float | None = None) -> Any:
         """
         Remote procedure call. Sends a 'call' request and waits for the response.
+        With `timeout`, raises TimeoutError if no reply arrives in time (useful
+        e.g. for the initial handshake with the server).
         """
         assert isinstance(func_name, str), 'func_name must be a string'
-        req = {'msg': 'call', 'target': target, 'func': func_name, 'args': args}
-        return self._sendRequestAndWait(req, log=log)
+        req = {
+            'msg': 'call',
+            'target': target,
+            'func': func_name,
+            'args': args,
+            # 'nested' tells the remote side that this call is made while
+            # handling a call from the remote side (e.g. a sysCall callback
+            # invoked from Lua) and must therefore be executed right away.
+            # Calls made from sysCall_thread itself are not 'nested': they
+            # originate from the thread body, not from a re-entrant callback.
+            'nested': bool(self._callStack) and self._callStack[-1] != 'sysCall_thread',
+        }
+        return self._sendRequestAndWait(req, log=log, timeout=timeout)
+
+    def runOnlyDuringSimulation(self, enabled: bool = True) -> bool:
+        """
+        External-client command: ask the worker script to stop serving this
+        client once the simulation is stopped (i.e. when
+        sim.scene.simulation.state == sim.simulationState.stopped). The worker
+        then sends 'bye' and terminates, so pending calls and spin() end
+        instead of keeping the client alive outside of a simulation.
+
+        Returns the new state. Pass enabled=False to undo it.
+        """
+        return self.call(None, 'runOnlyDuringSimulation', enabled)
+
+    def module(self, name: str) -> ModuleProxy:
+        """
+        Returns a proxy to one of CoppeliaSim's Lua modules (e.g. 'simUI',
+        'simOMPL', 'simIK', 'simVision', 'simAssimp'), executed on the remote
+        Lua state (the worker script for an external client, the wrapper script
+        for an embedded Python script):
+
+            simUI = rapi.module('simUI')
+            ui = simUI.create('<ui>...</ui>')
+            simUI.show(ui)
+        """
+        return ModuleProxy(self, name)
 
     def registerCallback(self, func_name: str, func: Callable, sysCall: bool = False) -> None:
         """
@@ -208,36 +502,47 @@ class ZMQRemoteAPI:
         if msg == 'call':
             func_name: str = req['func']
             args = req.get('args', ())
+            if req.get('target') is None and func_name == 'sysCall_cleanup':
+                self._sysCallCleanupDone = True
+            self._callStack.append(func_name)
             try:
-                if req.get('target') is not None:
-                    # Object‑oriented call – must be implemented by a subclass.
-                    result = self.callMethod(req['target'], func_name, *args)
-                else:
-                    func = self.callables.get(func_name)
-                    if func is None:
-                        raise NameError(f'No such function: {func_name}')
-                    if not callable(func):
-                        raise TypeError(f'Not a callable: {func_name}')
-                    result = func(*args)
+                try:
+                    if req.get('target') is not None:
+                        # Object‑oriented call – must be implemented by a subclass.
+                        result = self.callMethod(req['target'], func_name, *args)
+                    else:
+                        func = self.callables.get(func_name)
+                        if func is None and self.resolveCallable is not None:
+                            # Owners (e.g. the embedded Python wrapper) may resolve
+                            # an unregistered name from the script's own namespace,
+                            # so that 'myFunc#ext' reaches a plain Python function.
+                            func = self.resolveCallable(func_name)
+                        if func is None:
+                            raise NameError(f'No such function: {func_name}')
+                        if not callable(func):
+                            raise TypeError(f'Not a callable: {func_name}')
+                        result = func(*args)
 
-                # Normalize result: wrap single non‑tuple values, keep tuples as is.
-                if result is None:
-                    result = ()
-                elif not isinstance(result, tuple):
-                    result = (result,)
-                error = False
-            except Exception as e:
-                import traceback
-                result = ''.join(traceback.format_exception_only(type(e), e)).rstrip()
-                result += '\nTraceback (most recent call last):'
-                def short(s, limit=59):
-                    if len(s) > limit:
-                        return '...' + s[-56:]
-                for f in traceback.extract_tb(e.__traceback__):
-                    result += f'\n  File "{short(f.filename)}", line {f.lineno}, in {f.name}\n    {f.line}'
-                error = True
+                    # Normalize result: wrap single non‑tuple values, keep tuples as is.
+                    if result is None:
+                        result = ()
+                    elif not isinstance(result, tuple):
+                        result = (result,)
+                    error = False
+                except Exception as e:
+                    import traceback
+                    result = ''.join(traceback.format_exception_only(type(e), e)).rstrip()
+                    result += '\nTraceback (most recent call last):'
+                    def short(s, limit=59):
+                        if len(s) > limit:
+                            return '...' + s[-56:]
+                    for f in traceback.extract_tb(e.__traceback__):
+                        result += f'\n  File "{short(f.filename)}", line {f.lineno}, in {f.name}\n    {f.line}'
+                    error = True
+            finally:
+                self._callStack.pop()
 
-            self.send({'msg': 'result', 'id': req_id, 'error': error, 'result': result})
+            self._reply({'msg': 'result', 'id': req_id, 'error': error, 'result': result})
         elif msg == 'registerCallback':
             func_name: str = req['func']
             try:
@@ -252,7 +557,7 @@ class ZMQRemoteAPI:
                 error = True
                 result = str(e)
 
-            self.send({'msg': 'result', 'id': req_id, 'error': error, 'result': result})
+            self._reply({'msg': 'result', 'id': req_id, 'error': error, 'result': result})
         elif msg == 'result':
             pend = self._pending.get(req_id)
             if pend:
@@ -263,6 +568,10 @@ class ZMQRemoteAPI:
                 self.log(1, f'received result for unknown id: {req_id}')
         elif msg == 'noop':
             pass
+        elif msg == 'bye':
+            # The remote side is leaving (e.g. a simulation-only worker whose
+            # simulation stopped): stop waiting for messages that will never come.
+            self._remoteBye = True
         else:
             self.log(1, f'unsupported message: {msg}')
 
@@ -272,8 +581,6 @@ class ZMQRemoteAPI:
         Returns true if a message was received and handled, otherwise False.
         """
         self._sendKeepAlive()
-        if not self.isRemoteAlive():
-            raise Exception('remote script has stopped responding')
         msg = self.recv(block=False, log=log)
         if msg:
             self.handleRequest(msg)
@@ -298,17 +605,56 @@ class ZMQRemoteAPI:
         else:
             while self.spinOnce(log=log): pass
 
-    def spinUntilComplete(self, req_id, *, log: bool = True):
+    def spin(self, timeout: float = 0.1) -> None:
+        """
+        Keep the client alive and serve incoming callbacks, until the remote side
+        is considered gone.
+
+        Blocks between messages (no busy-wait). Any queued message is processed
+        before checking the remote-alive state, so that e.g. a long-running
+        callback does not make the remote look dead.
+        """
+        while True:
+            self.spinSome()
+            if not self.isRemoteAlive():
+                return
+            self.spinSome(timeout)
+
+    def spinUntilComplete(self, req_id, *, log: bool = True, timeout: float | None = None):
         """
         Blocks and processes incoming messages until the request with the given 'req_id'
         is marked as complete in the pending requests table.
+
+        The wait is a true blocking socket receive: it returns as soon as *any*
+        message arrives (the reply, but also a re-entrant call from the remote
+        side, which is then served immediately). No polling/timeout granularity
+        is involved, and the process does not consume CPU while waiting.
+
+        With `timeout`, a TimeoutError is raised when no reply arrives in time.
         """
         assert(req_id)
-        while True:
-            pending = self._pending.get(req_id)
-            if pending and pending['done']:
-                return
-            self.spinOnce(log=log)
+        if timeout is None:
+            while True:
+                pending = self._pending.get(req_id)
+                if pending and pending['done']:
+                    return
+                msg = self.recv(block=True, log=log)
+                if msg is not None:
+                    self.handleRequest(msg)
+        else:
+            deadline = self.time() + timeout
+            while True:
+                pending = self._pending.get(req_id)
+                if pending and pending['done']:
+                    return
+                remaining = deadline - self.time()
+                if remaining <= 0:
+                    self._pending.pop(req_id, None)
+                    raise TimeoutError(f'no reply from the remote side within {timeout:g}s')
+                if self.poll(remaining):
+                    msg = self.recv(block=False, log=log)
+                    if msg is not None:
+                        self.handleRequest(msg)
 
     def poll(self, timeout: float = 0) -> bool:
         """
@@ -324,38 +670,62 @@ class ZMQRemoteAPI:
         """Low-level sender: CBOR-encodes the dict and sends it."""
         if not self._socket:
             raise RuntimeError('Socket not available')
-        if log: self.log(2, 'sending:', msg)
-        data = cbor2.dumps(msg, encoders=self._encoders(), default=self._encode_default)
-        if log: self.log(3, f'CBOR payload: {data.hex(' ')}')
+        # Beware: the arguments of a log() call are evaluated even when the
+        # verbosity level is too low, so check the level before building the
+        # (potentially large) hex dump.
+        if log and self.verbose >= 2: self.log(2, 'sending:', msg)
+        data = cbor2.dumps(msg, encoders=self._encoders_cache, default=self._encode_default)
+        if log and self.verbose >= 3: self.log(3, f'CBOR payload: {data.hex(" ")}')
         self._socket.send(data, flags=0 if block else zmq.DONTWAIT)
         self.lastSendTime = self.time()
-        if log: self.log(2, 'sent')
+        if log and self.verbose >= 2: self.log(2, 'sent')
+
+    def _reply(self, msg: Dict[str, Any]) -> None:
+        """Send a reply, tolerating a remote side that is already gone."""
+        try:
+            self.send(msg, log=False)
+        except Exception as e:
+            self.log(1, 'could not send reply:', e)
 
     def recv(self, *, block: bool = True, log: bool = True) -> Optional[Dict[str, Any]]:
         """
         Low-level receiver: receives and CBOR-decodes a message.
 
-        @param block: if True, blocks indefinitely; if False, uses NOBLOCK.
+        @param block: if True, blocks on the socket until a message is available;
+                      if False, uses NOBLOCK.
         Returns the decoded dict, or None if no message was available (only when block=False).
         """
         if not self._socket:
             raise RuntimeError('Socket not available')
         if block:
-            if log: self.log(2, 'receiving... (block)')
-            data = self._socket.recv()
+            # Blocking receive: poll (event driven, so it returns immediately
+            # when a message arrives) in order to notice when the remote side
+            # disappears without being able to send anything. ZMQ does not
+            # signal a peer disconnection, so silence is the only indication.
+            while True:
+                if self._socket.poll(timeout=1000):
+                    data = self._socket.recv(flags=zmq.NOBLOCK)
+                    break
+                # Keep the connection alive while we are waiting for a reply
+                # (e.g. while the simulation is paused, or while Lua is busy):
+                # otherwise the remote side would consider us gone after its
+                # own liveness timeout.
+                self._sendKeepAlive()
+                if not self.isRemoteAlive():
+                    raise RuntimeError('the remote side is not responding anymore')
         else:
             try:
                 data = self._socket.recv(flags=zmq.NOBLOCK)
             except zmq.Again:
                 return None
-        if log: self.log(2, f'received {len(data)} bytes')
-        if log: self.log(3, f'CBOR payload: {data.hex(' ')}')
+        if log and self.verbose >= 2: self.log(2, f'received {len(data)} bytes')
+        if log and self.verbose >= 3: self.log(3, f'CBOR payload: {data.hex(" ")}')
         try:
             msg = cbor2.loads(data, tag_hook=self._tag_hook)
         except Exception as e:
-            if log: self.log(1, f'invalid CBOR data: {e!s}')
+            if log and self.verbose >= 1: self.log(1, f'invalid CBOR data: {e!s}')
             return None
-        if log: self.log(2, 'received:', msg)
+        if log and self.verbose >= 2: self.log(2, 'received:', msg)
         self.lastRecvTime = self.time()
         return msg
 
@@ -573,35 +943,91 @@ class PythonWrapper:
 
         self.sysCalls = sysCalls
         sim.Object._callMethod = self.rapi.call
+        # The Lua side may be halted for arbitrary amounts of time (popup menu,
+        # modal dialog, edit mode): never treat its silence as death. This
+        # process is killed by the Lua side when the script is cleaned up.
+        self.rapi.remoteSilenceTimeout = 0
+        # Let 'myFunc#ext' calls reach a plain Python function defined by the
+        # script, without having to register it explicitly (registered callbacks
+        # still take precedence).
+        self.rapi.resolveCallable = self._resolveGlobal
         self.rapi.log(1, 'initializing...')
+
+    def _resolveGlobal(self, name: str) -> Any:
+        """
+        Looks up a (possibly dotted) callable in the script's namespace, e.g.
+        'myFunc' or 'a.b.myFunc'. Returns None if it does not exist or is not
+        callable.
+        """
+        obj: Any = self._g
+        for part in name.split('.'):
+            if isinstance(obj, dict):
+                obj = obj.get(part)
+            else:
+                obj = getattr(obj, part, None)
+            if obj is None:
+                return None
+        return obj if callable(obj) else None
 
     def registerSysCalls(self):
         self.rapi.log(1, 'registering sysCalls...')
+        import inspect
         for name in self.sysCalls:
-            if callable(func := self._g.get(name)):
-                self.rapi.log(2, f'registering sysCall {name}...')
-                self.rapi.registerCallback(name, func, False)
+            func = self._g.get(name)
+            if not callable(func):
+                continue
+            if inspect.iscoroutinefunction(func):
+                raise TypeError(
+                    f'"{name}" must be a regular function, not a coroutine function. '
+                    f'Threading is provided by Lua: use sim.self.step() (or sim.step()) to yield.')
+            self.rapi.log(2, f'registering sysCall {name}...')
+            self.rapi.registerCallback(name, func, False)
+
+    def step(self):
+        """
+        Suspend the calling sysCall_thread until the next simulation step.
+
+        This is a regular blocking call: Lua's thread coroutine suspends itself
+        (exactly as sim.self:step() does in Lua) and answers the call when it is
+        resumed in a later simulation step. While suspended, other calls coming
+        from Lua (e.g. sysCall_actuation) are still served.
+        """
+        if not self._callStack or self._callStack[-1] != 'sysCall_thread':
+            raise RuntimeError('sim.step()/sim.sleep() can only be used from within sysCall_thread')
+        sim.self.step()
+
+    def sleep(self, duration):
+        """Suspend the calling sysCall_thread for the given simulation duration."""
+        if not self._callStack or self._callStack[-1] != 'sysCall_thread':
+            raise RuntimeError('sim.step()/sim.sleep() can only be used from within sysCall_thread')
+        end = sim.scene.simulation.time + duration
+        while sim.scene.simulation.time < end:
+            sim.self.step()
 
     def ready(self):
         self.rapi.log(1, 'ready')
         self.rapi.call(None, '__ready')
 
-    async def spinAsync(self):
-        import asyncio
-        self.ready()
-        self.rapi.log(1, 'spinning')
-        while 1:
-            self.rapi.spinSome()
-            await asyncio.sleep(0)
-
     def spin(self):
         self.ready()
         self.rapi.log(1, 'spinning')
-        while self.rapi.isRemoteAlive():
+        while True:
+            # Drain anything that is already queued first: this also refreshes
+            # the remote-alive timestamp after e.g. a long-running
+            # sysCall_thread, during which no message was read for a while.
             self.rapi.spinSome()
+            # Blocking wait (instead of a busy-wait): callbacks are served as
+            # soon as they arrive, but an idle script does not consume CPU.
+            #
+            # Note: we do NOT exit when isRemoteAlive() returns False. The Lua
+            # side may legitimately be silent for a while (the application can
+            # be in an edit mode or in a modal dialog, where sysCall callbacks
+            # are not dispatched, or it can be busy with a long operation).
+            # This process' lifetime is governed by the Lua side, which kills it
+            # in __pythonWrapper_cleanup().
+            self.rapi.spinSome(0.1)
             sys.stdout.flush()
             sys.stderr.flush()
-        self.rapi.log(1, 'exiting (isRemoteAlive returned False)')
 
     def registerCmdInterface(self):
         self.rapi.log(1, 'registering cmd intefrace...')
@@ -698,93 +1124,3 @@ class PythonWrapper:
             return 'not implemented'  #sim.getApiInfo(-1, cc[0])
         else:
             return ''
-
-    def registerThread(self, thread_fn) -> PythonWrapperThreadImpl:
-        self.rapi.log(1, 'registering thread...')
-        self._thread = PythonWrapperThreadImpl(thread_fn)
-        self.rapi.registerCallback('_sysCall_thread_init', self._thread.init, False)
-        self.rapi.registerCallback('_sysCall_thread_tick', self._thread.tick, False)
-        self.rapi.registerCallback('_sysCall_thread_cleanup', self._thread.cleanup, False)
-        return self._thread
-
-
-class PythonWrapperThreadImpl:
-    def __init__(self, thread_fn):
-        self._loop          = None
-        self._step_futures  = set()  # futures awaiting the next simulation step
-        self._thread_task   = None
-        self._thread_fn     = thread_fn
-
-    # --- the yield primitive -------------------------------------------------
-    async def step(self):
-        import asyncio
-        """
-        Suspend the calling coroutine until the next `tick()` call.
-        `tick()` sets the result of every pending future, which
-        resumes the coroutine during that same tick.
-        """
-        loop = asyncio.get_running_loop()
-        fut  = loop.create_future()
-        self._step_futures.add(fut)
-        try:
-            await fut
-        finally:
-            self._step_futures.discard(fut)
-
-    # --- "spin the loop once, without blocking" ------------------------------
-    @staticmethod
-    def _run_one_iteration(loop):
-        """
-        Run exactly one iteration of the asyncio loop.
-        * call_soon(stop) queues a callback that flags the loop to exit
-            after the current iteration completes.
-        * run_forever() then processes the ready queue (all wake-ups that
-            were scheduled *before* the call) and returns immediately.
-        Because the ready queue is non-empty, the underlying selector.select(0)
-        is non-blocking.
-        """
-        if loop is None or loop.is_closed():
-            return
-        loop.call_soon(loop.stop)
-        loop.run_forever()
-
-    # --- the three executor callbacks ---------------------------------------
-    def init(self):
-        import asyncio
-        self._loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(self._loop)
-        self._thread_task = self._loop.create_task(self._thread_fn())
-        # Run up to the first `await step()` so the coroutine is "primed".
-        self._run_one_iteration(self._loop)
-
-    def tick(self):
-        # 1) Resume every coroutine that was awaiting step().
-        pending = list(self._step_futures)
-        self._step_futures.clear()
-        for fut in pending:
-            if not fut.done():
-                fut.set_result(None)
-
-        # 2) Advance the loop by one iteration (non-blocking).
-        self._run_one_iteration(self._loop)
-
-    def cleanup(self):
-        import asyncio
-        if self._loop is None or self._loop.is_closed():
-            return
-
-        for task in asyncio.all_tasks(self._loop):
-            task.cancel()
-
-        # Give cancellations one iteration to propagate (their `finally`
-        # blocks in `step()` will run).
-        self._run_one_iteration(self._loop)
-
-        _thread_task = None
-        self._loop.close()
-        asyncio.set_event_loop(None)
-
-    async def sim_sleep(self, duration):
-        end = sim.scene.simulation.time + duration
-        while sim.scene.simulation.time < end:
-            await self.step()
