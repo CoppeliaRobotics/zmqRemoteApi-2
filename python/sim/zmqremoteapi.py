@@ -53,6 +53,39 @@ from pathlib import Path
 import sim
 
 
+class RemoteGoneError(RuntimeError):
+    """Raised when the remote side is considered gone (no reply and no keep-alive)."""
+
+
+# RFC8746 typed-array tags -> numpy dtype. Kept at module level so that decoding
+# arrays (images, buffers, matrices) does not rebuild this table for every value.
+_TAG_TO_DTYPE = {
+    64: np.dtype("u1"),        # U8
+    65: np.dtype(">u2"),       # U16BE
+    66: np.dtype(">u4"),       # U32BE
+    67: np.dtype(">u8"),       # U64BE
+    68: np.dtype("u1"),        # U8C (same as U8, often char buffer)
+    69: np.dtype("<u2"),        # U16LE
+    70: np.dtype("<u4"),        # U32LE
+    71: np.dtype("<u8"),        # U64LE
+    72: np.dtype("i1"),        # S8
+    73: np.dtype(">i2"),        # S16BE
+    74: np.dtype(">i4"),        # S32BE
+    75: np.dtype(">i8"),        # S64BE
+    77: np.dtype("<i2"),        # S16LE
+    78: np.dtype("<i4"),        # S32LE
+    79: np.dtype("<i8"),        # S64LE
+    80: np.dtype(">f2"),        # F16BE
+    81: np.dtype(">f4"),        # F32BE
+    82: np.dtype(">f8"),        # F64BE
+    84: np.dtype("<f2"),        # F16LE
+    85: np.dtype("<f4"),        # F32LE
+    86: np.dtype("<f8"),        # F64LE
+    # 83 (F128BE) and 87 (F128LE) are deliberately omitted: numpy has no
+    # portable 128-bit float dtype.
+}
+
+
 class _Table(dict):
     """A Lua table received by value: supports t.key as well as t['key']."""
 
@@ -330,7 +363,11 @@ class ZMQRemoteAPI:
             self._context = None
 
     def __del__(self) -> None:
-        self.cleanup()
+        try:
+            self.cleanup()
+        except Exception:
+            # During interpreter shutdown the zmq objects may already be gone.
+            pass
 
     def log(self, level: int, *args: Any) -> None:
         if level <= self.verbose:
@@ -359,11 +396,14 @@ class ZMQRemoteAPI:
         req_id = self._nextId()
         req['id'] = req_id
         self._pending[req_id] = {'done': False, 'result': None, 'error': False}
-        self.send(req, log=log)
-        self.spinUntilComplete(req_id, log=log, timeout=timeout)
-        pending = self._pending.get(req_id)
-        assert pending and pending['done']
-        del self._pending[req_id]
+        try:
+            self.send(req, log=log)
+            self.spinUntilComplete(req_id, log=log, timeout=timeout)
+            pending = self._pending[req_id]
+        finally:
+            # Never leak a pending entry, whatever happened (timeout, remote
+            # gone, keyboard interrupt, ...).
+            self._pending.pop(req_id, None)
         if pending['error']:
             raise Exception(pending['result'])
         else:
@@ -383,10 +423,17 @@ class ZMQRemoteAPI:
     def _sendKeepAlive(self):
         """
         Helper: sends a keep-alive message (noop) if needed.
+
+        A failed keep-alive is not fatal: the remote side may be gone already (or
+        the socket may be closing); the liveness check in recv() decides what to
+        do next.
         """
         if self.keepAliveInterval <= 0: return
         if self.lastSendTime + self.keepAliveInterval < self.time():
-            self.send({'msg': 'noop'})
+            try:
+                self.send({'msg': 'noop'})
+            except Exception as e:
+                self.log(2, 'keep-alive send failed:', e)
 
     def isRemoteAlive(self):
         """
@@ -500,7 +547,11 @@ class ZMQRemoteAPI:
         req_id = req.get('id', -1)
 
         if msg == 'call':
-            func_name: str = req['func']
+            func_name = req.get('func')
+            if not isinstance(func_name, str):
+                self._reply({'msg': 'result', 'id': req_id, 'error': True,
+                             'result': "protocol error: missing 'func' field"})
+                return
             args = req.get('args', ())
             if req.get('target') is None and func_name == 'sysCall_cleanup':
                 self._sysCallCleanupDone = True
@@ -544,11 +595,13 @@ class ZMQRemoteAPI:
 
             self._reply({'msg': 'result', 'id': req_id, 'error': error, 'result': result})
         elif msg == 'registerCallback':
-            func_name: str = req['func']
+            func_name = req.get('func')
             try:
+                if not isinstance(func_name, str):
+                    raise ValueError("protocol error: missing 'func' field")
                 # Store a wrapper that calls back to the remote side.
                 self.callables[func_name] = lambda *args: self.call(None, func_name, *args)
-                if req['sysCall']:
+                if req.get('sysCall', False):
                     #globals()[func_name] = self.callables[func_name]
                     raise Exception('not supported')
                 error = False
@@ -561,7 +614,7 @@ class ZMQRemoteAPI:
         elif msg == 'result':
             pend = self._pending.get(req_id)
             if pend:
-                pend['result'] = req['result']
+                pend['result'] = req.get('result')
                 pend['error'] = req.get('error', False)
                 pend['done'] = True
             else:
@@ -610,15 +663,18 @@ class ZMQRemoteAPI:
         Keep the client alive and serve incoming callbacks, until the remote side
         is considered gone.
 
-        Blocks between messages (no busy-wait). Any queued message is processed
-        before checking the remote-alive state, so that e.g. a long-running
-        callback does not make the remote look dead.
+        The wait is event-driven: the process sleeps in the socket poll and wakes
+        up only for an incoming message (or to send a keep-alive), instead of
+        waking up every `timeout` seconds. `timeout` is kept for API compatibility
+        (it used to be the polling granularity of the old busy-wait loop).
         """
         while True:
-            self.spinSome()
-            if not self.isRemoteAlive():
+            try:
+                msg = self.recv(block=True)
+            except RemoteGoneError:
                 return
-            self.spinSome(timeout)
+            if msg is not None:
+                self.handleRequest(msg)
 
     def spinUntilComplete(self, req_id, *, log: bool = True, timeout: float | None = None):
         """
@@ -712,7 +768,7 @@ class ZMQRemoteAPI:
                 # own liveness timeout.
                 self._sendKeepAlive()
                 if not self.isRemoteAlive():
-                    raise RuntimeError('the remote side is not responding anymore')
+                    raise RemoteGoneError('the remote side is not responding anymore')
         else:
             try:
                 data = self._socket.recv(flags=zmq.NOBLOCK)
@@ -723,8 +779,10 @@ class ZMQRemoteAPI:
         try:
             msg = cbor2.loads(data, tag_hook=self._tag_hook)
         except Exception as e:
-            if log and self.verbose >= 1: self.log(1, f'invalid CBOR data: {e!s}')
-            return None
+            # Never drop the message silently: the peer sent a reply that was
+            # received (and consumed) here, so the caller would otherwise wait
+            # forever for a response that will never come again.
+            raise RuntimeError(f'invalid CBOR data: {e!s}') from e
         if log and self.verbose >= 2: self.log(2, 'received:', msg)
         self.lastRecvTime = self.time()
         return msg
@@ -737,41 +795,15 @@ class ZMQRemoteAPI:
 
         if tag.tag == sim.Matrix.CBOR_TAG:
             return sim.Matrix.fromcbor(tag)
-        if tag.tag in range(64, 88):
-            _TAG_TO_DTYPE = {
-                64: np.dtype("u1"),        # U8
-                65: np.dtype(">u2"),       # U16BE
-                66: np.dtype(">u4"),       # U32BE
-                67: np.dtype(">u8"),       # U64BE
-                68: np.dtype("u1"),        # U8C (same as U8, often char buffer)
-                69: np.dtype("<u2"),       # U16LE
-                70: np.dtype("<u4"),       # U32LE
-                71: np.dtype("<u8"),       # U64LE
-                72: np.dtype("i1"),        # S8
-                73: np.dtype(">i2"),       # S16BE
-                74: np.dtype(">i4"),       # S32BE
-                75: np.dtype(">i8"),       # S64BE
-                77: np.dtype("<i2"),       # S16LE
-                78: np.dtype("<i4"),       # S32LE
-                79: np.dtype("<i8"),       # S64LE
-                80: np.dtype(">f2"),       # F16BE
-                81: np.dtype(">f4"),       # F32BE
-                82: np.dtype(">f8"),       # F64BE
-                83: np.dtype(">f16"),      # F128BE (may not be supported everywhere)
-                84: np.dtype("<f2"),       # F16LE
-                85: np.dtype("<f4"),       # F32LE
-                86: np.dtype("<f8"),       # F64LE
-                87: np.dtype("<f16"),      # F128LE (platform dependent)
-            }
-            if tag.tag in _TAG_TO_DTYPE:
-                dtype = _TAG_TO_DTYPE[tag.tag]
-                payload = tag.value
-                if isinstance(payload, memoryview):
-                    payload = payload.tobytes()
-                elif isinstance(payload, list):
-                    # rare fallback: list of ints
-                    payload = bytes(payload)
-                return np.frombuffer(payload, dtype=dtype)
+        if tag.tag in _TAG_TO_DTYPE:
+            dtype = _TAG_TO_DTYPE[tag.tag]
+            payload = tag.value
+            if isinstance(payload, memoryview):
+                payload = payload.tobytes()
+            elif isinstance(payload, list):
+                # rare fallback: list of ints
+                payload = bytes(payload)
+            return np.frombuffer(payload, dtype=dtype)
         if tag.tag == sim.Object.CBOR_TAG:
             return sim.Object.fromcbor(tag)
         if tag.tag == sim.ObjectArray.CBOR_TAG:
