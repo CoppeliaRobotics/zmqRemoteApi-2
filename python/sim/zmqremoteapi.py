@@ -141,14 +141,14 @@ def _unpackResult(res: Any) -> Any:
 class LuaObjectProxy:
     """
     Proxy to a Lua object created by a module, e.g. the instance returned by
-    `Motion.MoveToPose(params)`.
+    `simMotion.MoveToPose(params)`.
 
     The Lua object lives in the Lua state; it is kept in a registry there and
     addressed by an integer id. Attribute access yields a callable that invokes
     the method **with the object as self**, so the Lua side sees a normal
     `object:method(...)` call:
 
-        motion = Motion.MoveToPose(params)
+        motion = simMotion.MoveToPose(params)
         motion.run()
         motion.remove()
     """
@@ -201,7 +201,7 @@ class LuaObjectProxy:
 class ModuleProxy:
     """
     Proxy to one of CoppeliaSim's Lua modules (e.g. 'simUI', 'simOMPL',
-    'simIK', 'simVision', 'simAssimp', 'Motion').
+    'simIK', 'simVision', 'simAssimp', 'simMotion').
 
     Those modules are Lua tables (often backed by a C plugin, e.g.
     `simUI = loadPlugin 'simUI'`) living in the Lua state of the script or
@@ -214,8 +214,8 @@ class ModuleProxy:
         simUI.curve_type.xy          # constants/sub-tables work too
         simUI.curve_style.scatter
 
-        Motion = rapi.module('Motion')   # Lua objects (classes) work too
-        motion = Motion.MoveToPose(params)
+        simMotion = rapi.module('simMotion')   # Lua objects (classes) work too
+        motion = simMotion.MoveToPose(params)
         motion.run()
 
     Each attribute is resolved on first access (and cached) as a function or
