@@ -6,8 +6,7 @@ args = argparser.parse_args()
 import sim
 from sim.zmqremoteapi import ZMQRemoteAPI
 
-port = ZMQRemoteAPI().call(None, 'spawnWorker')
-rapi = ZMQRemoteAPI(port = port, verbose = args.verbose)
+rapi = ZMQRemoteAPI(verbose = args.verbose)
 sim.Object._callMethod = rapi.call
 
 def cb():
