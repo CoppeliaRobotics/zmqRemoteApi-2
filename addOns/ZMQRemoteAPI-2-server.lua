@@ -10,15 +10,27 @@ end
 
 function sysCall_init()
     workers = {}
+    -- Optional broker port: start with e.g. -GzmqRemoteApi2Port=24021.
+    -- Without that named parameter (or with an invalid value) the broker keeps
+    -- the default port (24020).
+    local port = 24020
+    local ok, value = pcall(function() return sim.app.namedParam.zmqRemoteApi2Port end)
+    if ok then
+        local n = tonumber(value)
+        if n and n >= 1 and n <= 65535 then
+            port = math.floor(n)
+        end
+    end
     rapi_broker = sim.ZMQRemoteAPI{
         name = 'server',
         server = true,
+        port = port,
         verbose = sim.app.customData['zmqRemoteApi2.verbose'] or 0,
     }
     rapi_broker.keepAliveInterval = 0 -- broker doesn't need keep-alive
     rapi_broker:registerCallback('getPort', getPort)
     rapi_broker:registerCallback('spawnWorker', spawnWorker)
-    rapi_broker:log(1, 'server started')
+    rapi_broker:log(1, 'server started on port ' .. port)
 end
 
 function sysCall_thread()
