@@ -141,14 +141,14 @@ def _unpackResult(res: Any) -> Any:
 class LuaObjectProxy:
     """
     Proxy to a Lua object created by a module, e.g. the instance returned by
-    `simMotion.MoveToPose(params)`.
+    `Motion.MoveToPose(params)`.
 
     The Lua object lives in the Lua state; it is kept in a registry there and
     addressed by an integer id. Attribute access yields a callable that invokes
     the method **with the object as self**, so the Lua side sees a normal
     `object:method(...)` call:
 
-        motion = simMotion.MoveToPose(params)
+        motion = Motion.MoveToPose(params)
         motion.run()
         motion.remove()
     """
@@ -201,7 +201,7 @@ class LuaObjectProxy:
 class ModuleProxy:
     """
     Proxy to one of CoppeliaSim's Lua modules (e.g. 'simUI', 'simOMPL',
-    'simIK', 'simVision', 'simAssimp', 'simMotion').
+    'simIK', 'simVision', 'simAssimp', 'Motion').
 
     Those modules are Lua tables (often backed by a C plugin, e.g.
     `simUI = loadPlugin 'simUI'`) living in the Lua state of the script or
@@ -214,8 +214,8 @@ class ModuleProxy:
         simUI.curve_type.xy          # constants/sub-tables work too
         simUI.curve_style.scatter
 
-        simMotion = rapi.module('simMotion')   # Lua objects (classes) work too
-        motion = simMotion.MoveToPose(params)
+        Motion = rapi.module('Motion')   # Lua objects (classes) work too
+        motion = Motion.MoveToPose(params)
         motion.run()
 
     Each attribute is resolved on first access (and cached) as a function or
@@ -278,7 +278,24 @@ class ModuleProxy:
 
 
 class ZMQRemoteAPI:
-    def __init__(self, *, host: str = '127.0.0.1', port: int = 24020, name: str | None = None, server: bool = False, verbose: int = 0, **kwargs):
+    def __init__(self, *, host: str = '127.0.0.1', port: int | None = None, broker_port: int | None = None, name: str | None = None, server: bool = False, verbose: int = 0, _internal: bool = False, **kwargs):
+        # Client without an explicit worker port: connect to a broker
+        # (broker_port, or 24020 by default), spawn a worker there, and use
+        # that worker's port. The temporary broker connection is closed again.
+        if not server and port is None:
+            if broker_port is None:
+                broker_port = 24020
+            broker = ZMQRemoteAPI(
+                host=host, port=broker_port, name=f'{name or "client"}-broker',
+                server=False, verbose=verbose, _internal=True, **kwargs)
+            try:
+                port = broker.callEx(None, 'spawnWorker', (), timeout=5.0)
+            finally:
+                broker.cleanup()
+        elif port is None:
+            # Server without an explicit port: keep the historical default.
+            port = 24020
+
         self.name = name
         self.server = server
         self.verbose = verbose
@@ -335,6 +352,13 @@ class ZMQRemoteAPI:
         # cleanup() below when we are the first to leave).
         self._sysCallCleanupDone = False
 
+        # The first client also becomes the default RPC entry point, so that
+        # objects created with a bare sim.Object(handle) are routed through it,
+        # as in embedded scripts. With several clients, client.Object(...) is
+        # the explicit form.
+        if not server and not _internal and sim.Object._callMethod is None:
+            sim.Object._callMethod = self.call
+
     def cleanup(self) -> None:
         """Run sysCall_cleanup if needed, tell the remote side we are leaving, then close."""
         if self._socket:
@@ -361,6 +385,15 @@ class ZMQRemoteAPI:
             self._context.term()
             self._socket = None
             self._context = None
+
+    def Object(self, *args: Any, **kwargs: Any):
+        """Create a sim.Object routed through this client.
+
+        Equivalent to sim.Object(..., callMethod=self.call); useful when several
+        ZMQRemoteAPI clients are used, while the bare sim.Object(...) form is
+        bound to the first client.
+        """
+        return sim.Object(*args, **kwargs, callMethod=self.call)
 
     def __del__(self) -> None:
         try:
@@ -805,9 +838,13 @@ class ZMQRemoteAPI:
                 payload = bytes(payload)
             return np.frombuffer(payload, dtype=dtype)
         if tag.tag == sim.Object.CBOR_TAG:
-            return sim.Object.fromcbor(tag)
+            obj = sim.Object.fromcbor(tag)
+            # Route this object's properties/methods through this client, even
+            # if sim.Object._callMethod points at another connection.
+            obj._callMethod_local = self.call
+            return obj
         if tag.tag == sim.ObjectArray.CBOR_TAG:
-            return sim.ObjectArray.fromcbor(tag)
+            return sim.ObjectArray.fromcbor(tag, callMethod=self.call)
         if tag.tag == sim.Color.CBOR_TAG:
             return sim.Color.fromcbor(tag)
         if tag.tag == sim.Quaternion.CBOR_TAG:
